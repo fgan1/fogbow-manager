@@ -6,6 +6,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.UUID;
 
 import org.apache.http.HttpStatus;
 import org.apache.http.StatusLine;
@@ -70,9 +71,12 @@ public class CloudStackStoragePlugin implements StoragePlugin {
 			LOGGER.error("Default zone id must be specified.");
 			throw new OCCIException(ErrorType.BAD_REQUEST, ResponseConstants.IRREGULAR_SYNTAX);
 		}
-
+		
+		String name = generateName();
+		
 		URIBuilder uriBuilder = createURIBuilder(endpoint, CREATE_VOLUME_COMMAND);
 		uriBuilder.addParameter(ZONE_ID, zoneId);
+		uriBuilder.addParameter(VOLUME_NAME, name);
 		getDiskOffering(token,
 				xOCCIAtt.get(OrderAttribute.STORAGE_SIZE.getValue()), uriBuilder);
 		
@@ -87,6 +91,11 @@ public class CloudStackStoragePlugin implements StoragePlugin {
 			throw new OCCIException(ErrorType.BAD_REQUEST,
 					ResponseConstants.IRREGULAR_SYNTAX);
 		}
+	}
+
+	protected String generateName() {
+		String name = "fogbow_volume_"+UUID.randomUUID();
+		return name;
 	}
 
 	private void getDiskOffering(Token token, String volumeSize, URIBuilder createVolumeUriBuilder) {
