@@ -159,6 +159,8 @@ public class ManagerController {
 	private PoolingHttpClientConnectionManager cm;
 
 	private ManagerDataStore managerDatabase;
+	
+	private boolean isBasicMode;
 
 	public ManagerController(Properties properties) {
 		this(properties, null);
@@ -187,6 +189,9 @@ public class ManagerController {
 			this.orderDBUpdaterTimer = new ManagerTimer(executor);
 			this.capacityControllerUpdaterTimer = new ManagerTimer(executor);
 		}
+		
+		isBasicMode = new Boolean(properties.getProperty(ConfigurationConstants.BASIC_MODE));
+		
 		managerDatabase = new ManagerDataStore(properties);
 		recoverPreviousOrders();
 		triggerOrderDBUpdater();
@@ -235,7 +240,7 @@ public class ManagerController {
 	public void setComputeAccountingPlugin(AccountingPlugin computeAccountingPlugin) {
 		this.computeAccountingPlugin = computeAccountingPlugin;
 		// accounging updater may starting only after set accounting plugin
-		if (!accountingUpdaterTimer.isScheduled()) {
+		if (this.computeAccountingPlugin != null && !accountingUpdaterTimer.isScheduled()) {
 			triggerAccountingUpdater();
 		}
 	}
@@ -243,7 +248,7 @@ public class ManagerController {
 	public void setStorageAccountingPlugin(AccountingPlugin storageAccountingPlugin) {
 		this.storageAccountingPlugin = storageAccountingPlugin;
 		
-		if (!accountingUpdaterTimer.isScheduled()) {
+		if (this.storageAccountingPlugin != null && !accountingUpdaterTimer.isScheduled()) {
 			triggerAccountingUpdater();
 		}		
 	}
@@ -307,20 +312,26 @@ public class ManagerController {
 	}
 
 	private void triggerAccountingUpdater() {
-		String accountingUpdaterPeriodStr = properties.getProperty(ConfigurationConstants.ACCOUNTING_UPDATE_PERIOD_KEY);
-		final long accountingUpdaterPeriod = accountingUpdaterPeriodStr == null ? DEFAULT_ACCOUNTING_UPDATE_PERIOD
-				: Long.valueOf(accountingUpdaterPeriodStr);
+		
+		if (!isBasicMode) {
 
-		accountingUpdaterTimer.scheduleAtFixedRate(new TimerTask() {
-			@Override
-			public void run() {
-				try {
-					updateAccounting();					
-				} catch (Throwable e) {
-					LOGGER.warn("Error while updating accounting", e);
+			String accountingUpdaterPeriodStr = properties
+					.getProperty(ConfigurationConstants.ACCOUNTING_UPDATE_PERIOD_KEY);
+			final long accountingUpdaterPeriod = accountingUpdaterPeriodStr == null ? DEFAULT_ACCOUNTING_UPDATE_PERIOD
+					: Long.valueOf(accountingUpdaterPeriodStr);
+
+			accountingUpdaterTimer.scheduleAtFixedRate(new TimerTask() {
+				@Override
+				public void run() {
+					try {
+						updateAccounting();
+					} catch (Throwable e) {
+						LOGGER.warn("Error while updating accounting", e);
+					}
 				}
-			}
-		}, 0, accountingUpdaterPeriod);
+			}, 0, accountingUpdaterPeriod);
+
+		}
 	}
 
 	private void updateAccounting() {
@@ -337,49 +348,61 @@ public class ManagerController {
 	}
 
 	private void updateStorageAccounting() {
-		List<Order> ordersStorageWithInstances = new ArrayList<Order>(
-				orderRepository.getOrdersIn(OrderConstants.STORAGE_TERM,
-				OrderState.FULFILLED, OrderState.DELETED));
-		List<String> orderStorageIds = new LinkedList<String>();
-		for (Order order: ordersStorageWithInstances) {
-			orderStorageIds.add(order.getId());
+		
+		if(!isBasicMode){
+			
+			List<Order> ordersStorageWithInstances = new ArrayList<Order>(
+					orderRepository.getOrdersIn(OrderConstants.STORAGE_TERM, OrderState.FULFILLED, OrderState.DELETED));
+			List<String> orderStorageIds = new LinkedList<String>();
+			for (Order order : ordersStorageWithInstances) {
+				orderStorageIds.add(order.getId());
+			}
+			LOGGER.debug("Usage accounting is about to be updated. The following storage orders do have instances:"
+					+ orderStorageIds);
+			storageAccountingPlugin.update(ordersStorageWithInstances);
+		
 		}
-		LOGGER.debug("Usage accounting is about to be updated. The following storage orders do have instances:"
-				+ orderStorageIds);
-		storageAccountingPlugin.update(ordersStorageWithInstances);
 	}
 
 	private void updateComputeAccounting() {
-		List<Order> ordersComputeWithInstances = new ArrayList<Order>(
-				orderRepository.getOrdersIn(OrderConstants.COMPUTE_TERM,
-				OrderState.FULFILLED, OrderState.DELETED));
-		List<String> orderComputeIds = new LinkedList<String>();
-		for (Order order: ordersComputeWithInstances) {
-			orderComputeIds.add(order.getId());
+		if(!isBasicMode){
+			List<Order> ordersComputeWithInstances = new ArrayList<Order>(
+					orderRepository.getOrdersIn(OrderConstants.COMPUTE_TERM,
+							OrderState.FULFILLED, OrderState.DELETED));
+			List<String> orderComputeIds = new LinkedList<String>();
+			for (Order order: ordersComputeWithInstances) {
+				orderComputeIds.add(order.getId());
+			}
+			LOGGER.debug("Usage accounting is about to be updated. The following compute orders do have instances: "
+					+ orderComputeIds);
+			computeAccountingPlugin.update(ordersComputeWithInstances);
 		}
-		LOGGER.debug("Usage accounting is about to be updated. The following compute orders do have instances: "
-				+ orderComputeIds);
-		computeAccountingPlugin.update(ordersComputeWithInstances);
 	}
 	
 	private void triggerCapacityControllerUpdater() {
-		String capacityControllerUpdaterPeriodStr = properties.getProperty(ConfigurationConstants.CAPACITY_CONTROLLER_UPDATE_PERIOD_KEY);
-		final long capacityControllerUpdaterPeriod = capacityControllerUpdaterPeriodStr == null ? DEFAULT_CAPACITY_CONTROLLER_UPDATE_PERIOD
-				: Long.valueOf(capacityControllerUpdaterPeriodStr);
+		
+		if(!isBasicMode){
 
-		capacityControllerUpdaterTimer.scheduleAtFixedRate(new TimerTask() {
-			@Override
-			public void run() {
-				try {
-					updateVirtualQuotas();					
-				} catch (Throwable e) {
-					LOGGER.error("Erro while updating accounting", e);
+			String capacityControllerUpdaterPeriodStr = properties.getProperty(ConfigurationConstants.CAPACITY_CONTROLLER_UPDATE_PERIOD_KEY);
+			final long capacityControllerUpdaterPeriod = capacityControllerUpdaterPeriodStr == null ? DEFAULT_CAPACITY_CONTROLLER_UPDATE_PERIOD
+					: Long.valueOf(capacityControllerUpdaterPeriodStr);
+
+			capacityControllerUpdaterTimer.scheduleAtFixedRate(new TimerTask() {
+				@Override
+				public void run() {
+					try {
+						updateVirtualQuotas();					
+					} catch (Throwable e) {
+						LOGGER.error("Erro while updating accounting", e);
+					}
 				}
-			}
-		}, 0, capacityControllerUpdaterPeriod);
+			}, 0, capacityControllerUpdaterPeriod);
+
+		}
 	}
 	
 	private void updateVirtualQuotas() {
+		
 		LOGGER.debug("Updating virtual quotas (capacity controller plugin).");
 		for(FederationMember member : members){
 			if(!(member.getId().equals(properties.getProperty(ConfigurationConstants.XMPP_JID_KEY)))){
@@ -416,7 +439,7 @@ public class ManagerController {
 	public void setCapacityControllerPlugin(CapacityControllerPlugin capacityControllerPlugin) {
 		this.capacityControllerPlugin = capacityControllerPlugin;
 		// capacity controller updater should start only after setting capacity controller plugin
-		if (!capacityControllerUpdaterTimer.isScheduled()) {
+		if (this.capacityControllerPlugin != null && !capacityControllerUpdaterTimer.isScheduled()) {
 			triggerCapacityControllerUpdater();
 		}
 	}
@@ -565,9 +588,12 @@ public class ManagerController {
 				return new FederationMember(getResourcesInfo(
 						this.getLocalCredentials(accessId), token.getUser(), true));
 			}
-			
-			return new FederationMember(ManagerPacketHelper.getRemoteUserQuota
-					(token, federationMemberId, packetSender));
+			if(!isBasicMode){
+				return new FederationMember(ManagerPacketHelper.getRemoteUserQuota
+						(token, federationMemberId, packetSender));
+			}else{
+				return null;
+			}
 		} catch (Exception e) {
 			LOGGER.error("Error while trying to get member [" + accessId + "] quota from ["
 					+ federationMemberId + "]", e);
@@ -698,7 +724,7 @@ public class ManagerController {
 		LOGGER.debug("Removing orderId: " + orderId);
 		checkOrderId(accessId, orderId);
 		Order order = orderRepository.get(orderId);
-		if (order != null 
+		if (!isBasicMode && order != null 
 				&& order.getProvidingMemberId() != null 
 				&& (order.getState().equals(OrderState.OPEN) 
 						|| order.getState().equals(OrderState.PENDING))) {
@@ -796,7 +822,9 @@ public class ManagerController {
 		} else {
 			LOGGER.debug(order.getInstanceId() + " is remote, going out to " + order.getProvidingMemberId()
 					+ " to get its information.");
-			instance = getRemoteInstance(order);
+			if(!isBasicMode){
+				instance = getRemoteInstance(order);
+			}
 		}
 		return instance;
 	}
@@ -816,11 +844,17 @@ public class ManagerController {
 				
 				instance.addAttribute(Instance.SSH_USERNAME_ATT, getSSHCommonUser());
 				Map<String, String> serviceAddresses = getExternalServiceAddresses(order.getId());
-				if (serviceAddresses != null) {
+				
+				if (!isBasicMode && serviceAddresses != null ) {
 					instance.addAttribute(Instance.SSH_PUBLIC_ADDRESS_ATT, serviceAddresses.get(SSH_SERVICE_NAME));
 					serviceAddresses.remove(SSH_SERVICE_NAME);
 					instance.addAttribute(Instance.EXTRA_PORTS_ATT, new JSONObject(serviceAddresses).toString());
 				}
+				
+				//TODO se não tem serviceAddresses, usar as informações de instance.LOCAL_IP_ADDRESS_ATT
+				//Apenas os plugins de OpenNebula e OpenStackV2 preenchem estas informações.
+				//EC2 e Azure compute pluging preenchem as informações de SSH_PUBLIC_ADDRESS_ATT com as informações
+				//retornadas na cloud.
 				
 				Category osCategory = getImageCategory(order.getCategories());
 				if (osCategory != null) {
@@ -835,7 +869,9 @@ public class ManagerController {
 		} else {
 			LOGGER.debug(order.getInstanceId() + " is remote, going out to " + order.getProvidingMemberId()
 					+ " to get its information.");
-			instance = getRemoteInstance(order);
+			if(!isBasicMode){
+				instance = getRemoteInstance(order);
+			}
 		}
 		return instance;
 	}
@@ -970,8 +1006,10 @@ public class ManagerController {
 			} else if (resourceKind.equals(OrderConstants.NETWORK_TERM)) {
 				this.networkPlugin.removeInstance(localToken, instanceId);
 			}
-		} else {					
-			removeRemoteInstance(order);
+		} else {		
+			if(!isBasicMode){
+				removeRemoteInstance(order);
+			}
 		}
 		
 		
@@ -1092,7 +1130,7 @@ public class ManagerController {
 				+ " for requesting member: " + requestingMemberId + " with requestingToken " + requestingUserToken);
 		Order order = new Order(orderId, requestingUserToken, categories, xOCCIAtt, false, requestingMemberId);
 		
-		if(!isThereEnoughQuota(requestingMemberId)){
+		if(!isBasicMode && !isThereEnoughQuota(requestingMemberId)){
 			ManagerPacketHelper.replyToServedOrder(order, packetSender);
 			return;
 		}
@@ -1105,6 +1143,9 @@ public class ManagerController {
 	}
 	
 	public boolean isThereEnoughQuota(String requestingMemberId){
+		if(isBasicMode){
+			return true;
+		}
 		int instancesFulfilled = 0;
 		List<Order> allServedOrders = orderRepository.getAllServedOrders();
 		for (Order order : allServedOrders) {
@@ -1214,21 +1255,26 @@ public class ManagerController {
 	}
 
 	private void triggerServedOrderMonitoring() {
-		String servedOrderMonitoringPeriodStr = properties
-				.getProperty(ConfigurationConstants.SERVED_ORDER_MONITORING_PERIOD_KEY);
-		final long servedOrderMonitoringPeriod = servedOrderMonitoringPeriodStr == null
-				? DEFAULT_SERVED_ORDER_MONITORING_PERIOD : Long.valueOf(servedOrderMonitoringPeriodStr);
+		
+		if(!isBasicMode){
 
-		servedOrderMonitoringTimer.scheduleAtFixedRate(new TimerTask() {
-			@Override
-			public void run() {	
-				try {
-					monitorServedOrders();
-				} catch (Throwable e) {
-					LOGGER.error("Error while monitoring served orders", e);
+			String servedOrderMonitoringPeriodStr = properties
+					.getProperty(ConfigurationConstants.SERVED_ORDER_MONITORING_PERIOD_KEY);
+			final long servedOrderMonitoringPeriod = servedOrderMonitoringPeriodStr == null
+					? DEFAULT_SERVED_ORDER_MONITORING_PERIOD : Long.valueOf(servedOrderMonitoringPeriodStr);
+
+			servedOrderMonitoringTimer.scheduleAtFixedRate(new TimerTask() {
+				@Override
+				public void run() {	
+					try {
+						monitorServedOrders();
+					} catch (Throwable e) {
+						LOGGER.error("Error while monitoring served orders", e);
+					}
 				}
-			}
-		}, 0, servedOrderMonitoringPeriod);
+			}, 0, servedOrderMonitoringPeriod);
+
+		}
 	}
 
 	private String getLocalImageId(List<Category> categories, Token federationUserToken) {
@@ -1595,7 +1641,7 @@ public class ManagerController {
 					asynchronousOrders.remove(order.getId());
 				}
 
-				if (!order.isLocal()) {
+				if (!isBasicMode && !order.isLocal()) {
 					ManagerPacketHelper.replyToServedOrder(order, packetSender);
 				}
 
@@ -1725,7 +1771,7 @@ public class ManagerController {
 							}
 						}
 					}
-					if (!isFulfilled) {
+					if (!isFulfilled && !isBasicMode) {
 						createAsynchronousRemoteInstance(order, allowedFederationMembers);
 					}
 					allFulfilled &= isFulfilled;
@@ -1903,7 +1949,11 @@ public class ManagerController {
 					LOGGER.warn("Order failed locally for quota exceeded.", e);
 					ArrayList<Order> ordersWithInstances = new ArrayList<Order>(
 							orderRepository.getOrdersIn(OrderState.FULFILLED, OrderState.DELETED));
-					Order orderToPreempt = prioritizationPlugin.takeFrom(order, ordersWithInstances);
+					
+					Order orderToPreempt = null;
+					if(!isBasicMode){
+						orderToPreempt = prioritizationPlugin.takeFrom(order, ordersWithInstances);
+					}
 					if (orderToPreempt == null) {
 						throw e;
 					}
@@ -1935,7 +1985,7 @@ public class ManagerController {
 				order.setState(OrderState.FULFILLED);
 				order.setInstanceId(instanceId);
 				order.setProvidingMemberId(properties.getProperty(ConfigurationConstants.XMPP_JID_KEY));
-				if (!order.isLocal()) {
+				if (!order.isLocal() && !isBasicMode) {
 					ManagerPacketHelper.replyToServedOrder(order, packetSender);
 				}
 				
@@ -1953,7 +2003,7 @@ public class ManagerController {
 				order.setState(OrderState.FULFILLED);
 				order.setInstanceId(instanceId);
 				order.setProvidingMemberId(properties.getProperty(ConfigurationConstants.XMPP_JID_KEY));
-				if (!order.isLocal()) {
+				if (!order.isLocal() && !isBasicMode) {
 					ManagerPacketHelper.replyToServedOrder(order, packetSender);
 				}
 				
@@ -2094,7 +2144,9 @@ public class ManagerController {
 			} else {
 				LOGGER.debug(order.getInstanceId() + " is remote, going out to " + order.getProvidingMemberId()
 						+ " to get its information.");
-				instance = getRemoteInstance(order);
+				if(!isBasicMode){
+					instance = getRemoteInstance(order);
+				}
 			}
 			allFullInstances.add(instance);
 		}
@@ -2131,7 +2183,7 @@ public class ManagerController {
 				
 		boolean isLocal = true;
 		String attachmentId = null;
-		if (!computeOrder.getProvidingMemberId().equals(properties.get(ConfigurationConstants.XMPP_JID_KEY))) {
+		if (!isBasicMode && !computeOrder.getProvidingMemberId().equals(properties.get(ConfigurationConstants.XMPP_JID_KEY))) {
 			isLocal = false;
 			attachmentId = ManagerPacketHelper.remoteStorageLink(new StorageLink(xOCCIAtt), 
 						computeOrder.getProvidingMemberId(), federationLocalToken, packetSender);
@@ -2172,7 +2224,7 @@ public class ManagerController {
 			throw new OCCIException(ErrorType.NOT_FOUND, ResponseConstants.NOT_FOUND);
 		}
 		
-		if (!storageLink.isLocal()) {
+		if (!isBasicMode && !storageLink.isLocal()) {
 			storageLink.setFederationToken(federationToken);
 			ManagerPacketHelper.deleteRemoteStorageLink(storageLink, packetSender);
 		} else {
@@ -2196,7 +2248,13 @@ public class ManagerController {
 	}		
 
 	public List<AccountingInfo> getAccountingInfo(String federationAccessId, String resourceKing) {
+		
+		if(isBasicMode){
+			return new ArrayList<AccountingInfo>();
+		}
+		
 		Token federationToken = getTokenFromFederationIdP(federationAccessId);
+		
 		if (federationToken == null) {
 			throw new OCCIException(ErrorType.UNAUTHORIZED, ResponseConstants.UNAUTHORIZED);
 		}
@@ -2242,6 +2300,11 @@ public class ManagerController {
 	}
 	
 	public ResourceUsage getUsages(String federationAccessId, String providingMember) {
+		
+		if(isBasicMode){
+			new ResourceUsage(0, 0);
+		}
+		
 		double computeUsage = getUsage(federationAccessId, providingMember, computeAccountingPlugin);
 		double storageUsage = getUsage(federationAccessId, providingMember, storageAccountingPlugin);
 				

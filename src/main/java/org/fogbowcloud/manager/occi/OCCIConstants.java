@@ -62,7 +62,9 @@ public class OCCIConstants {
 	    for(Field f: fields) {
 	    	f.setAccessible(true);
 	    	try {
-	    		values.add((String) f.get(null));
+	    		if(!NETWORK_TERM.equals(f.get(null)) && !NETWORK_INTERFACE_TERM.equals(f.get(null))){
+	    			values.add((String) f.get(null));
+	    		}
 	    	} catch (Exception e) {
 	    		continue;
 	    	}

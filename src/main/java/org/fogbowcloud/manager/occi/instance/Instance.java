@@ -23,6 +23,8 @@ public class Instance {
 	private static final String PREFIX_DEFAULT_ATTRIBUTE = "X-OCCI-Attribute: ";
 	private static final String CATEGORY = "Category:";
 
+	public static final String DEFAULT_SSH_PORT = "22";
+	
 	private String id;
 	private List<Resource> resources;
 	private List<Link> links;

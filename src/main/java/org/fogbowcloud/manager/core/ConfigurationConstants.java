@@ -78,4 +78,6 @@ public class ConfigurationConstants {
 
 	//Network Data Store
 	public static final String NETWORK_DATA_STORE_URL = "network_datastore_url";
+	
+	public static final String BASIC_MODE = "basic_mode";
 }

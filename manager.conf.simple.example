@@ -1,0 +1,84 @@
+
+##Stand-alone mode enable
+basic_mode=true
+
+## Manager databases
+manager_datastore_url=jdbc:sqlite:$path_to_manager_db
+instance_datastore_url=jdbc:sqlite:$path_to_instances_db
+storage_datastore_url=jdbc:sqlite:$path_to_storage_db
+network_datastore_url=jdbc:sqlite:$path_to_network_db
+
+## Order database
+bd_updater_period=30000
+
+## Image Storage Plugin (HTTPDownload)
+image_storage_class=org.fogbowcloud.manager.core.plugins.imagestorage.http.HTTPDownloadImageStoragePlugin
+image_storage_http_base_url=http://appliance-repo.egi.eu/images
+image_storage_http_tmp_storage=/local/cloudstack/
+image_storage_http_accepted_formats=qcow2,raw,vmdk
+image_storage_http_conversion_output_format=qcow2,raw,vmdks
+
+## Static mapping between local image ids and image names
+## Applies to all image storage plugins
+image_storage_static_fogbow-ubuntu=24e3c56a-edfa-46cc-a4f0-1444f300445c
+
+## Mapper Plugin / Local Credentials
+federation_user_credentail_class=org.fogbowcloud.manager.core.plugins.localcredentails.SingleMapperPlugin
+
+## Authorization Plugin
+federation_authorization_class=org.fogbowcloud.manager.core.plugins.authorization.AllowAllAuthorizationPlugin
+
+## Member Validator
+member_validator_class=org.fogbowcloud.manager.core.plugins.memberauthorization.DefaultMemberAuthorizationPlugin
+member_validator_ca_dir=
+
+my_ip=10.30.0.192
+
+http_port=8182
+
+#admin_users=fogbowadm
+
+## Compute Plugin (Cloudstack)
+compute_class=org.fogbowcloud.manager.core.plugins.compute.cloudstack.CloudStackComputePlugin
+compute_cloudstack_api_url=http://$address/client/api
+compute_cloudstack_zone_id=$zone_id
+compute_cloudstack_image_download_base_url=http://$address
+compute_cloudstack_image_download_base_path=$path_to_download_dir
+compute_cloudstack_hypervisor=$hypervisor_type
+compute_cloudstack_image_download_os_type_id=$os_type_id
+compute_cloudstack_expunge_on_destroy=true
+
+## Network Plugin (NoCloud)
+network_class=org.fogbowcloud.manager.core.plugins.network.nocloud.NoCloudNetworkPlugin
+#network_cloudstack_api_url=https://$address/client/api
+#network_cloudstack_zone_id=$zone_id
+#network_cloudstack_netoffering_id=$offering_id
+
+
+## Storage Plugin (CloudStack)
+storage_class=org.fogbowcloud.manager.core.plugins.storage.cloudstack.CloudStackStoragePlugin
+
+## Local Identity (Cloudstack Identity Plugin)
+local_identity_class=org.fogbowcloud.manager.core.plugins.identity.cloudstack.CloudStackIdentityPlugin
+local_identity_url=http://$address/client/api/
+
+## Local Credentials
+federation_user_credentail_class=org.fogbowcloud.manager.core.plugins.localcredentails.SingleMapperPlugin
+
+## Mapper Plugin / Local credentials to be used when we miss information about a given user
+mapper_defaults_apiKey=$user_api_key
+mapper_defaults_secretKey=$user_secret_key
+ 
+ ## Federation Identity (LDAP Identity Plugin)
+federation_identity_class=org.fogbowcloud.manager.core.plugins.identity.ldap.LdapIdentityPlugin
+ldap_identity_url=ldap:$ldap_server_address
+ldap_base=$ldap_server_base
+#If it dont has encrypt, left this property without value.
+ldap_encrypt_type=$ldap_encrypt
+
+## Signature informations (Only for LDAP Indentity plugin)
+private_key_path=$pem_private_file
+public_key_path=$pem_public_file
+
+capacity_controller_class=org.fogbowcloud.manager.core.plugins.capacitycontroller.satisfactiondriven.SatisfactionDrivenCapacityControllerPlugin
+

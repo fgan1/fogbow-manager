@@ -43,6 +43,7 @@ import org.xmpp.component.ComponentException;
 
 public class Main {
 
+	private static final String DEFAULT_XMPP_JID = "local-member";
 	private static final int DEFAULT_REQUEST_HEADER_SIZE = 1024*1024;
 	private static final int DEFAULT_RESPONSE_HEADER_SIZE = 1024*1024;
 	private static final Logger LOGGER = Logger.getLogger(Main.class);
@@ -58,6 +59,8 @@ public class Main {
 		FileInputStream input = new FileInputStream(args[0]);
 		properties.load(input);
 		ResourceRepository.init(properties);
+		
+		boolean isBasicMode = new Boolean(properties.getProperty(ConfigurationConstants.BASIC_MODE));
 		
 		ComputePlugin computePlugin = null;
 		try {
@@ -119,43 +122,6 @@ public class Main {
 			LOGGER.warn("Image Storage plugin not specified in properties. Using the default one.", e);
 		}
 				
-		BenchmarkingPlugin benchmarkingPlugin = null;
-		try {
-			benchmarkingPlugin = (BenchmarkingPlugin) createInstance(
-					ConfigurationConstants.BENCHMARKING_PLUGIN_CLASS_KEY, properties);
-		} catch (Exception e) {
-			benchmarkingPlugin = new VanillaBenchmarkingPlugin(properties);
-			LOGGER.warn("Benchmarking plugin not specified in properties. Using the default one.", e);
-		}
-				
-		AccountingPlugin computeAccountingPlugin = null;
-		try {
-			computeAccountingPlugin = (AccountingPlugin) createInstanceWithBenchmarkingPlugin(
-					ConfigurationConstants.COMPUTE_ACCOUNTING_PLUGIN_CLASS_KEY, properties, benchmarkingPlugin);
-		} catch (Exception e) {
-			computeAccountingPlugin = new FCUAccountingPlugin(properties, benchmarkingPlugin);
-			LOGGER.warn("Accounting plugin (compute) not specified in properties. Using the default one.", e);
-		}
-		
-		AccountingPlugin storageccountingPlugin = null;
-		try {
-			storageccountingPlugin = (AccountingPlugin) createInstance(
-					ConfigurationConstants.STORAGE_ACCOUNTING_PLUGIN_CLASS_KEY, properties);
-		} catch (Exception e) {
-			storageccountingPlugin = new SimpleStorageAccountingPlugin(properties);
-			LOGGER.warn("Accounting plugin (storage) not specified in properties. Using the default one.", e);
-		}		
-		
-		FederationMemberPickerPlugin memberPickerPlugin = null;
-		try {
-			memberPickerPlugin = (FederationMemberPickerPlugin) createInstanceWithAccountingPlugin(
-					ConfigurationConstants.MEMBER_PICKER_PLUGIN_CLASS_KEY, properties,
-					computeAccountingPlugin);
-		} catch (Exception e) {
-			memberPickerPlugin = new RoundRobinMemberPickerPlugin(properties, computeAccountingPlugin);
-			LOGGER.warn("Member picker plugin not specified in properties. Using the default one.", e);
-		}
-		
 		MapperPlugin mapperPlugin = null;
 		try {
 			mapperPlugin = (MapperPlugin) createInstance(
@@ -184,7 +150,6 @@ public class Main {
 			System.exit(EXIT_ERROR_CODE);
 		}		
 
-		
 		String occiExtraResourcesPath = properties
 				.getProperty(ConfigurationConstants.OCCI_EXTRA_RESOURCES_KEY_PATH);
 		if (occiExtraResourcesPath != null && !occiExtraResourcesPath.isEmpty()) {
@@ -195,15 +160,57 @@ public class Main {
 			}
 		}
 		
-		PrioritizationPlugin prioritizationPlugin = new TwoFoldPrioritizationPlugin(properties,	computeAccountingPlugin);
-		
+		PrioritizationPlugin prioritizationPlugin = null;
+		BenchmarkingPlugin benchmarkingPlugin = null;
+		AccountingPlugin computeAccountingPlugin = null;
+		AccountingPlugin storageccountingPlugin = null;
+		FederationMemberPickerPlugin memberPickerPlugin = null;
 		CapacityControllerPlugin capacityControllerPlugin = null;
-		try {
-			capacityControllerPlugin = (CapacityControllerPlugin) createInstanceWithAccountingPlugin(
-					ConfigurationConstants.CAPACITY_CONTROLLER_PLUGIN_CLASS, properties, computeAccountingPlugin);
-		} catch (Exception e) {
-			capacityControllerPlugin = new SatisfactionDrivenCapacityControllerPlugin();
-			LOGGER.warn("Capacity Controller plugin not specified in properties. Using the default one.", e);
+		
+		if(!isBasicMode){
+			
+			try {
+				benchmarkingPlugin = (BenchmarkingPlugin) createInstance(
+						ConfigurationConstants.BENCHMARKING_PLUGIN_CLASS_KEY, properties);
+			} catch (Exception e) {
+				benchmarkingPlugin = new VanillaBenchmarkingPlugin(properties);
+				LOGGER.warn("Benchmarking plugin not specified in properties. Using the default one.", e);
+			}
+					
+			try {
+				computeAccountingPlugin = (AccountingPlugin) createInstanceWithBenchmarkingPlugin(
+						ConfigurationConstants.COMPUTE_ACCOUNTING_PLUGIN_CLASS_KEY, properties, benchmarkingPlugin);
+			} catch (Exception e) {
+				computeAccountingPlugin = new FCUAccountingPlugin(properties, benchmarkingPlugin);
+				LOGGER.warn("Accounting plugin (compute) not specified in properties. Using the default one.", e);
+			}
+			
+			try {
+				storageccountingPlugin = (AccountingPlugin) createInstance(
+						ConfigurationConstants.STORAGE_ACCOUNTING_PLUGIN_CLASS_KEY, properties);
+			} catch (Exception e) {
+				storageccountingPlugin = new SimpleStorageAccountingPlugin(properties);
+				LOGGER.warn("Accounting plugin (storage) not specified in properties. Using the default one.", e);
+			}		
+			
+			try {
+				memberPickerPlugin = (FederationMemberPickerPlugin) createInstanceWithAccountingPlugin(
+						ConfigurationConstants.MEMBER_PICKER_PLUGIN_CLASS_KEY, properties,
+						computeAccountingPlugin);
+			} catch (Exception e) {
+				memberPickerPlugin = new RoundRobinMemberPickerPlugin(properties, computeAccountingPlugin);
+				LOGGER.warn("Member picker plugin not specified in properties. Using the default one.", e);
+			}
+			
+			try {
+				capacityControllerPlugin = (CapacityControllerPlugin) createInstanceWithAccountingPlugin(
+						ConfigurationConstants.CAPACITY_CONTROLLER_PLUGIN_CLASS, properties, computeAccountingPlugin);
+			} catch (Exception e) {
+				capacityControllerPlugin = new SatisfactionDrivenCapacityControllerPlugin();
+				LOGGER.warn("Capacity Controller plugin not specified in properties. Using the default one.", e);
+			}
+			
+			prioritizationPlugin = new TwoFoldPrioritizationPlugin(properties,	computeAccountingPlugin);
 		}
 
 		ManagerController facade = new ManagerController(properties);
@@ -218,9 +225,9 @@ public class Main {
 		facade.setStorageAccountingPlugin(storageccountingPlugin);
 		facade.setMemberPickerPlugin(memberPickerPlugin);
 		facade.setPrioritizationPlugin(prioritizationPlugin);
+		facade.setCapacityControllerPlugin(capacityControllerPlugin);
 		facade.setLocalCredentailsPlugin(mapperPlugin);
 		facade.setStoragePlugin(storagePlugin);
-		facade.setCapacityControllerPlugin(capacityControllerPlugin);
 		facade.setNetworkPlugin(networkPlugin);
 		
 		String xmppHost = properties.getProperty(ConfigurationConstants.XMPP_HOST_KEY);
@@ -243,6 +250,12 @@ public class Main {
 			xmpp.process(false);
 			xmpp.init();
 			facade.setPacketSender(xmpp);
+		}else{
+			
+			if(xmppJid == null || xmppJid.isEmpty()){
+				properties.setProperty(ConfigurationConstants.XMPP_JID_KEY, DEFAULT_XMPP_JID);
+			}
+			
 		}
 
 		OCCIApplication application = new OCCIApplication(facade);

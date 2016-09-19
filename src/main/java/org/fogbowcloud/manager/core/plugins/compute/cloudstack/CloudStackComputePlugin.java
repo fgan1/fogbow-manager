@@ -41,6 +41,10 @@ import org.restlet.data.Status;
 
 public class CloudStackComputePlugin implements ComputePlugin {
 
+	private static final String NETWORKTYPE_PROPERTY = "networktype";
+
+	private static final String NETWORK_ADVANCED_TYPE = "Advanced";
+
 	private static final Logger LOGGER = Logger.getLogger(CloudStackComputePlugin.class);
 	
 	protected static final String LIST_VMS_COMMAND = "listVirtualMachines";
@@ -54,6 +58,7 @@ public class CloudStackComputePlugin implements ComputePlugin {
 	protected static final String ATTACH_VOLUME_COMMAND = "attachVolume";
 	protected static final String DETACH_VOLUME_COMMAND = "detachVolume";
 	protected static final String QUERY_ASYNC_JOB_RESULT = "queryAsyncJobResult";
+	protected static final String LIST_ZONE = "listZones";
 	
 	protected static final String COMMAND = "command";
 	protected static final String TEMPLATE_ID = "templateid";
@@ -75,6 +80,7 @@ public class CloudStackComputePlugin implements ComputePlugin {
 	protected static final String ATTACH_DEVICE_ID = "deviceid";
 	protected static final String JOB_ID = "jobid";
 	protected static final String NETWORK_IDS = "networkids";
+	protected static final String ID = "id";
 	
 	private static final int LIMIT_TYPE_INSTANCES = 0;
 	private static final int LIMIT_TYPE_MEMORY = 9;
@@ -151,11 +157,13 @@ public class CloudStackComputePlugin implements ComputePlugin {
 		}
 		
 		String networId = xOCCIAtt.get(OrderAttribute.NETWORK_ID.getValue());
-		
-		if(networId == null || networId.isEmpty()){
+
+		if (networId == null || networId.isEmpty()) {
 			networId = defaultNetworkId;
 		}
-		uriBuilder.addParameter(NETWORK_IDS, networId);
+		if (networId != null && !networId.isEmpty()) {
+			uriBuilder.addParameter(NETWORK_IDS, networId);
+		}
 		
 		CloudStackHelper.sign(uriBuilder, token.getAccessId());
 		HttpResponseWrapper response = httpClient.doPost(uriBuilder.toString());
@@ -250,6 +258,24 @@ public class CloudStackComputePlugin implements ComputePlugin {
 		attributes.put("occi.compute.memory", String.valueOf(instanceJson.optDouble("memory") / 1024)); // Gb
 		attributes.put("occi.compute.cores", instanceJson.optString("cpunumber"));
 		attributes.put("occi.compute.hostname", instanceJson.optString("hostname"));
+		
+		//SSH_PUBLIC_ADDRESS_ATT - If Reverse tunnel is used, this value will be replaced by Tunnel address.
+		String publicAddress = "";
+		try {
+			JSONArray nics = instanceJson.getJSONArray("nic");
+			if (nics != null && nics.length() > 0) {
+				for (int index = 0; index < nics.length(); index++) {
+					JSONObject nicJson = nics.getJSONObject(index);
+					if (nicJson.getBoolean("isdefault")) {
+						publicAddress = nicJson.optString("ipaddress") + ":" + Instance.DEFAULT_SSH_PORT;
+						break;
+					}
+				}
+			}
+		} catch (JSONException e) {
+			LOGGER.error("Erro while getting local address informations");
+		}
+		attributes.put(Instance.SSH_PUBLIC_ADDRESS_ATT, publicAddress);
 		
 		String id = instanceJson.optString(VM_ID);
 		attributes.put("occi.core.id", id);
@@ -574,3 +600,4 @@ public class CloudStackComputePlugin implements ComputePlugin {
 	}
 	
 }
+

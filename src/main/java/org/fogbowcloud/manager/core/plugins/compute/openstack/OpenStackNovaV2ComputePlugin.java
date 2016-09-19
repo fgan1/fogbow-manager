@@ -430,6 +430,12 @@ public class OpenStackNovaV2ComputePlugin implements ComputePlugin {
 					rootServer.getJSONObject("server").getString(NAME_JSON_FIELD));
 			attributes.put("occi.core.id", id);
 			
+			//SSH_PUBLIC_ADDRESS_ATT - If Reverse tunnel is used, this value will be replaced by Tunnel address.
+			if(rootServer.getJSONObject("server").getString("accessIPv4") != null){
+				String publicAddress = rootServer.getJSONObject("server").getString("accessIPv4")+":"+Instance.DEFAULT_SSH_PORT;
+				attributes.put(Instance.SSH_PUBLIC_ADDRESS_ATT, publicAddress);
+			}
+			
 			// getting local private IP
 			JSONArray addressesNamesArray = rootServer.getJSONObject("server").getJSONObject("addresses").names();
 			String networkMac = "";
