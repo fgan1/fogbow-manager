@@ -7,6 +7,7 @@ import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.log4j.Logger;
 import org.fogbowcloud.manager.occi.model.Token;
@@ -17,7 +18,7 @@ public class StorageLinkRepository {
 	private static final Logger LOGGER = Logger.getLogger(StorageLinkRepository.class);
 	
 	// TODO refactor list to map
-	private Map<String, List<StorageLink>> storageLinks = new HashMap<String, List<StorageLink>>();
+	private Map<String, List<StorageLink>> storageLinks = new ConcurrentHashMap<String, List<StorageLink>>();
 		
 	protected Map<String, List<StorageLink>> getStorageLinks() {
 		return storageLinks;

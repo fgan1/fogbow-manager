@@ -3,10 +3,10 @@
 basic_mode=true
 
 ## Manager databases
-manager_datastore_url=jdbc:sqlite:$path_to_manager_db
-instance_datastore_url=jdbc:sqlite:$path_to_instances_db
-storage_datastore_url=jdbc:sqlite:$path_to_storage_db
-network_datastore_url=jdbc:sqlite:$path_to_network_db
+manager_datastore_url=jdbc:sqlite:managerStorage.db
+instance_datastore_urljdbc:sqlite:federatedInstance.db
+storage_datastore_url=jdbc:sqlite:federatedStorage.db
+network_datastore_url=jdbc:sqlite:federatedNetwork.db
 
 ## Order database
 bd_updater_period=30000
@@ -40,12 +40,12 @@ http_port=8182
 
 ## Compute Plugin (Cloudstack)
 compute_class=org.fogbowcloud.manager.core.plugins.compute.cloudstack.CloudStackComputePlugin
-compute_cloudstack_api_url=http://$address/client/api
-compute_cloudstack_zone_id=$zone_id
-compute_cloudstack_image_download_base_url=http://$address
-compute_cloudstack_image_download_base_path=$path_to_download_dir
-compute_cloudstack_hypervisor=$hypervisor_type
-compute_cloudstack_image_download_os_type_id=$os_type_id
+compute_cloudstack_api_url=http://10.30.0.192:8080/client/api
+compute_cloudstack_zone_id=05cd7178-09d7-47f9-baa6-5d3c828ae433
+compute_cloudstack_image_download_base_url=http://127.0.0.1:443
+compute_cloudstack_image_download_base_path=/local/cloudstack/
+compute_cloudstack_hypervisor=KVM
+compute_cloudstack_image_download_os_type_id=d987d22a-7ab4-11e6-a2fe-60a44c51716e
 compute_cloudstack_expunge_on_destroy=true
 
 ## Network Plugin (NoCloud)
@@ -60,25 +60,24 @@ storage_class=org.fogbowcloud.manager.core.plugins.storage.cloudstack.CloudStack
 
 ## Local Identity (Cloudstack Identity Plugin)
 local_identity_class=org.fogbowcloud.manager.core.plugins.identity.cloudstack.CloudStackIdentityPlugin
-local_identity_url=http://$address/client/api/
+local_identity_url=http://10.30.0.192:8080/client/api/
 
 ## Local Credentials
 federation_user_credentail_class=org.fogbowcloud.manager.core.plugins.localcredentails.SingleMapperPlugin
 
 ## Mapper Plugin / Local credentials to be used when we miss information about a given user
-mapper_defaults_apiKey=$user_api_key
-mapper_defaults_secretKey=$user_secret_key
+mapper_defaults_apiKey=6_tB9NmVhYAP3paJ4Qlxpr83dAUEHrMDSFbg5EsZ7eMw328DxEp_w_-jrmHexST5hF5u6WezBLn-DPC1M4OEoA
+mapper_defaults_secretKey=MjwJsG0V0ptEcpQEkCrzRsbmy94QLVB0-VXcbl5CaPmvqMb62vfG9nqhEwihLBq7_5LP2-KHHWaTRtwFi9QgRA
  
  ## Federation Identity (LDAP Identity Plugin)
 federation_identity_class=org.fogbowcloud.manager.core.plugins.identity.ldap.LdapIdentityPlugin
-ldap_identity_url=ldap:$ldap_server_address
-ldap_base=$ldap_server_base
-#If it dont has encrypt, left this property without value.
-ldap_encrypt_type=$ldap_encrypt
+ldap_identity_url=ldap://ldap.lsd.ufcg.edu.br:389
+ldap_base=dc=lsd,dc=ufcg,dc=edu,dc=br
+ldap_encrypt_type=
 
-## Signature informations (Only for LDAP Indentity plugin)
-private_key_path=$pem_private_file
-public_key_path=$pem_public_file
+## Signature informations
+private_key_path=/local/gustavo/home/keys/private_key.pem
+public_key_path=/local/gustavo/home/keys/public_key.pem
 
 capacity_controller_class=org.fogbowcloud.manager.core.plugins.capacitycontroller.satisfactiondriven.SatisfactionDrivenCapacityControllerPlugin
 

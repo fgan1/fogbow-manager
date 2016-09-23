@@ -851,11 +851,6 @@ public class ManagerController {
 					instance.addAttribute(Instance.EXTRA_PORTS_ATT, new JSONObject(serviceAddresses).toString());
 				}
 				
-				//TODO se não tem serviceAddresses, usar as informações de instance.LOCAL_IP_ADDRESS_ATT
-				//Apenas os plugins de OpenNebula e OpenStackV2 preenchem estas informações.
-				//EC2 e Azure compute pluging preenchem as informações de SSH_PUBLIC_ADDRESS_ATT com as informações
-				//retornadas na cloud.
-				
 				Category osCategory = getImageCategory(order.getCategories());
 				if (osCategory != null) {
 					instance.addResource(ResourceRepository.createImageResource(osCategory.getTerm()));
@@ -1025,7 +1020,7 @@ public class ManagerController {
 	}
 
 	protected void instanceRemoved(Order order) {			
-		if (order.getResourceKing().equals(OrderConstants.COMPUTE_TERM)) {
+		if ( !isBasicMode && order.getResourceKing().equals(OrderConstants.COMPUTE_TERM)) {
 			updateAccounting();
 			benchmarkingPlugin.remove(order.getInstanceId());			
 		}
