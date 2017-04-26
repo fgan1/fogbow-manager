@@ -30,6 +30,7 @@ import org.fogbowcloud.manager.occi.order.OrderAttribute;
 import org.fogbowcloud.manager.occi.order.OrderConstants;
 import org.fogbowcloud.manager.occi.order.OrderState;
 import org.fogbowcloud.manager.occi.util.OCCITestHelper;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -49,6 +50,7 @@ public class TestOCCIApplication {
 	@SuppressWarnings("unchecked")
 	@Before
 	public void setUp() {
+		
 		Properties properties = new Properties();
 		properties.put("scheduler_period", SCHEDULER_PERIOD.toString());
 		properties.put(ConfigurationConstants.XMPP_JID_KEY,
@@ -71,6 +73,8 @@ public class TestOCCIApplication {
 		});
 		
 		managerFacade = new ManagerController(properties, executor);
+		TestDataStorageHelper.clearManagerDataStore(
+				managerFacade.getManagerDataStoreController().getManagerDatabase());
 		occiApplication = new OCCIApplication(managerFacade);
 
 		// default instance count value is 1
@@ -89,7 +93,7 @@ public class TestOCCIApplication {
 
 		IdentityPlugin identityPlugin = Mockito.mock(IdentityPlugin.class);
 		HashMap<String, String> tokenAttr = new HashMap<String, String>();
-		Token userToken = new Token(OCCITestHelper.ACCESS_TOKEN, OCCITestHelper.USER_MOCK,
+		Token userToken = new Token(OCCITestHelper.ACCESS_TOKEN, new Token.User(OCCITestHelper.USER_MOCK, ""),
 				DefaultDataTestHelper.TOKEN_FUTURE_EXPIRATION, tokenAttr);
 
 		Mockito.when(identityPlugin.getToken(Mockito.anyString())).thenReturn(userToken);
@@ -120,6 +124,12 @@ public class TestOCCIApplication {
 	
 	public ManagerController getManagerFacade() {
 		return managerFacade;
+	}
+	
+	@After
+	public void tearDown() {
+		TestDataStorageHelper.clearManagerDataStore(
+				managerFacade.getManagerDataStoreController().getManagerDatabase());
 	}
 
 	@Test

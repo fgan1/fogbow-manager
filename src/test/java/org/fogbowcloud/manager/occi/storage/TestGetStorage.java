@@ -7,13 +7,12 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 
-import org.apache.commons.io.IOUtils;
 import org.apache.http.HttpResponse;
 import org.apache.http.HttpStatus;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.HttpClients;
-import org.apache.http.util.EntityUtils;
+import org.fogbowcloud.manager.core.ManagerController;
 import org.fogbowcloud.manager.core.plugins.AccountingPlugin;
 import org.fogbowcloud.manager.core.plugins.AuthorizationPlugin;
 import org.fogbowcloud.manager.core.plugins.BenchmarkingPlugin;
@@ -21,12 +20,12 @@ import org.fogbowcloud.manager.core.plugins.IdentityPlugin;
 import org.fogbowcloud.manager.core.plugins.MapperPlugin;
 import org.fogbowcloud.manager.core.plugins.StoragePlugin;
 import org.fogbowcloud.manager.core.util.DefaultDataTestHelper;
+import org.fogbowcloud.manager.occi.TestDataStorageHelper;
 import org.fogbowcloud.manager.occi.instance.Instance;
 import org.fogbowcloud.manager.occi.instance.InstanceState;
 import org.fogbowcloud.manager.occi.model.HeaderUtils;
 import org.fogbowcloud.manager.occi.model.OCCIHeaders;
 import org.fogbowcloud.manager.occi.model.Resource;
-import org.fogbowcloud.manager.occi.model.ResponseConstants;
 import org.fogbowcloud.manager.occi.model.Token;
 import org.fogbowcloud.manager.occi.order.Order;
 import org.fogbowcloud.manager.occi.order.OrderAttribute;
@@ -53,6 +52,7 @@ public class TestGetStorage {
 	private AuthorizationPlugin authorizationPlugin;
 	private OCCITestHelper helper;
 	private MapperPlugin mapperPlugin;
+	private ManagerController managerControler;
 
 	@Before
 	public void setup() throws Exception {
@@ -80,35 +80,35 @@ public class TestGetStorage {
 
 		identityPlugin = Mockito.mock(IdentityPlugin.class);
 		Mockito.when(identityPlugin.getToken(OCCITestHelper.ACCESS_TOKEN))
-				.thenReturn(new Token("id", OCCITestHelper.USER_MOCK, new Date(), new HashMap<String, String>()));
+				.thenReturn(new Token("id", new Token.User(OCCITestHelper.USER_MOCK, ""), new Date(), new HashMap<String, String>()));
 		
 		Mockito.when(identityPlugin.getToken(ACCESS_TOKEN))
-		.thenReturn(new Token("id_two", USER_WITHOUT_ORDERS, new Date(), new HashMap<String, String>()));		
+		.thenReturn(new Token("id_two", new Token.User(USER_WITHOUT_ORDERS, ""), new Date(), new HashMap<String, String>()));		
 		
 		
 		Mockito.when(identityPlugin.getAuthenticationURI()).thenReturn("Keystone uri='http://localhost:5000/'");
 
 		List<Order> ordersA = new LinkedList<Order>();
 		
-		Token token = new Token(OCCITestHelper.ACCESS_TOKEN, OCCITestHelper.USER_MOCK,
-				DefaultDataTestHelper.TOKEN_FUTURE_EXPIRATION, new HashMap<String, String>());
+		Token token = new Token(OCCITestHelper.ACCESS_TOKEN, new Token.User(OCCITestHelper.USER_MOCK, 
+				OCCITestHelper.USER_MOCK), DefaultDataTestHelper.TOKEN_FUTURE_EXPIRATION, new HashMap<String, String>());
 		
 		
 		HashMap<String, String> xOCCIAtt = new HashMap<String, String>();
 		xOCCIAtt.put(OrderAttribute.RESOURCE_KIND.getValue(), OrderConstants.STORAGE_TERM);
-		Order order1 = new Order("1", token, null, xOCCIAtt, true, "");
-		order1.setInstanceId(INSTANCE_1_ID);
-		order1.setProvidingMemberId(OCCITestHelper.MEMBER_ID);
-		ordersA.add(order1);
-		Order order2 = new Order("2", token, null, xOCCIAtt, true, "");
-		order2.setInstanceId(INSTANCE_2_ID);
-		order2.setProvidingMemberId(OCCITestHelper.MEMBER_ID);
-		ordersA.add(order2);
-		Order order3 = new Order("3", new Token("token", "user", DefaultDataTestHelper.TOKEN_FUTURE_EXPIRATION,
-				new HashMap<String, String>()), null, xOCCIAtt, true, "");
-		order3.setInstanceId(INSTANCE_3_ID_WITHOUT_USER);
-		order3.setProvidingMemberId(OCCITestHelper.MEMBER_ID);
-		ordersA.add(order3);
+		Order orderOne = new Order("1", token, null, xOCCIAtt, true, "");
+		orderOne.setInstanceId(INSTANCE_1_ID);
+		orderOne.setProvidingMemberId(OCCITestHelper.MEMBER_ID);
+		ordersA.add(orderOne);
+		Order orderTwo = new Order("2", token, null, xOCCIAtt, true, "");
+		orderTwo.setInstanceId(INSTANCE_2_ID);
+		orderTwo.setProvidingMemberId(OCCITestHelper.MEMBER_ID);
+		ordersA.add(orderTwo);
+		Order orderThreeDiferentUser = new Order("3", new Token("token", new Token.User("userDiferent", ""), 
+				DefaultDataTestHelper.TOKEN_FUTURE_EXPIRATION, new HashMap<String, String>()), null, xOCCIAtt, true, "");
+		orderThreeDiferentUser.setInstanceId(INSTANCE_3_ID_WITHOUT_USER);
+		orderThreeDiferentUser.setProvidingMemberId(OCCITestHelper.MEMBER_ID);
+		ordersA.add(orderThreeDiferentUser);
 
 		authorizationPlugin = Mockito.mock(AuthorizationPlugin.class);
 		Mockito.when(authorizationPlugin.isAuthorized(Mockito.any(Token.class))).thenReturn(true);
@@ -122,7 +122,7 @@ public class TestGetStorage {
 		
 		ordersToAdd.put(USER_WITHOUT_ORDERS, new ArrayList<Order>());		
 		
-		this.helper.initializeComponentCompute(null, storagePlugin, identityPlugin, authorizationPlugin, null,
+		managerControler = this.helper.initializeComponentCompute(null, storagePlugin, identityPlugin, authorizationPlugin, null,
 				Mockito.mock(AccountingPlugin.class), Mockito.mock(BenchmarkingPlugin.class), ordersToAdd,
 				mapperPlugin);
 
@@ -130,6 +130,8 @@ public class TestGetStorage {
 
 	@After
 	public void tearDown() throws Exception {
+		TestDataStorageHelper.clearManagerDataStore(
+				this.managerControler.getManagerDataStoreController().getManagerDatabase());
 		this.helper.stopComponent();
 	}
 
@@ -141,7 +143,8 @@ public class TestGetStorage {
 		HttpClient client = HttpClients.createMinimal();
 		HttpResponse response = client.execute(httpGet);
 
-		Assert.assertEquals(3, OCCITestHelper.getLocationIds(response).size());
+		int amountUsersMock = 2;
+		Assert.assertEquals(amountUsersMock, OCCITestHelper.getLocationIds(response).size());
 		Assert.assertEquals(HttpStatus.SC_OK, response.getStatusLine().getStatusCode());
 	}
 
@@ -155,7 +158,8 @@ public class TestGetStorage {
 		HttpClient client = HttpClients.createMinimal();
 		HttpResponse response = client.execute(httpGet);
 
-		Assert.assertEquals(3, OCCITestHelper.getURIList(response).size());
+		int amountUsersMock = 2;
+		Assert.assertEquals(amountUsersMock, OCCITestHelper.getURIList(response).size());
 		Assert.assertEquals(HttpStatus.SC_OK, response.getStatusLine().getStatusCode());
 		Assert.assertTrue(response.getFirstHeader(OCCIHeaders.CONTENT_TYPE).getValue()
 				.startsWith(OCCIHeaders.TEXT_URI_LIST_CONTENT_TYPE));

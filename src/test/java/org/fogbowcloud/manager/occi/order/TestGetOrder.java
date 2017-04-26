@@ -22,10 +22,11 @@ import org.fogbowcloud.manager.core.ManagerController;
 import org.fogbowcloud.manager.core.plugins.AuthorizationPlugin;
 import org.fogbowcloud.manager.core.plugins.BenchmarkingPlugin;
 import org.fogbowcloud.manager.core.plugins.ComputePlugin;
-import org.fogbowcloud.manager.core.plugins.MapperPlugin;
 import org.fogbowcloud.manager.core.plugins.IdentityPlugin;
+import org.fogbowcloud.manager.core.plugins.MapperPlugin;
 import org.fogbowcloud.manager.core.util.DefaultDataTestHelper;
 import org.fogbowcloud.manager.occi.OCCIConstants;
+import org.fogbowcloud.manager.occi.TestDataStorageHelper;
 import org.fogbowcloud.manager.occi.model.Category;
 import org.fogbowcloud.manager.occi.model.ErrorType;
 import org.fogbowcloud.manager.occi.model.HeaderUtils;
@@ -33,10 +34,6 @@ import org.fogbowcloud.manager.occi.model.OCCIException;
 import org.fogbowcloud.manager.occi.model.OCCIHeaders;
 import org.fogbowcloud.manager.occi.model.ResponseConstants;
 import org.fogbowcloud.manager.occi.model.Token;
-import org.fogbowcloud.manager.occi.order.OrderAttribute;
-import org.fogbowcloud.manager.occi.order.OrderConstants;
-import org.fogbowcloud.manager.occi.order.OrderServerResource;
-import org.fogbowcloud.manager.occi.order.OrderState;
 import org.fogbowcloud.manager.occi.util.OCCIComputeApplication;
 import org.fogbowcloud.manager.occi.util.OCCITestHelper;
 import org.junit.After;
@@ -56,7 +53,7 @@ public class TestGetOrder {
 	
 	@SuppressWarnings("unchecked")
 	@Before
-	public void setup() throws Exception {
+	public void setup() throws Exception {		
 		this.orderHelper = new OCCITestHelper();
 
 		ComputePlugin computePlugin = Mockito.mock(ComputePlugin.class);
@@ -66,13 +63,13 @@ public class TestGetOrder {
 		
 		IdentityPlugin identityPlugin = Mockito.mock(IdentityPlugin.class);
 		Mockito.when(identityPlugin.getToken(OCCITestHelper.ACCESS_TOKEN))
-				.thenReturn(new Token("id", OCCITestHelper.USER_MOCK, new Date(),
+				.thenReturn(new Token("id", new Token.User(OCCITestHelper.USER_MOCK, ""), new Date(),
 								new HashMap<String, String>()));
 		Mockito.when(identityPlugin.getToken(OCCITestHelper.INVALID_TOKEN)).thenThrow(
 				new OCCIException(ErrorType.UNAUTHORIZED, ResponseConstants.UNAUTHORIZED));
 
 		HashMap<String, String> tokenAttr = new HashMap<String, String>();
-		Token userToken = new Token(OCCITestHelper.ACCESS_TOKEN, OCCITestHelper.USER_MOCK,
+		Token userToken = new Token(OCCITestHelper.ACCESS_TOKEN, new Token.User(OCCITestHelper.USER_MOCK, ""),
 				DefaultDataTestHelper.TOKEN_FUTURE_EXPIRATION, tokenAttr);
 
 		Mockito.when(identityPlugin.getToken(OCCITestHelper.ACCESS_TOKEN)).thenReturn(userToken);
@@ -86,7 +83,7 @@ public class TestGetOrder {
 		Mockito.when(mapperPlugin.getAllLocalCredentials()).thenReturn(
 				defaultFederationUsersCrendetials);
 		Mockito.when(identityPlugin.createToken(credentails)).thenReturn(
-				new Token("id", OCCITestHelper.USER_MOCK, new Date(), new HashMap<String, String>()));		
+				new Token("id", new Token.User(OCCITestHelper.USER_MOCK, ""), new Date(), new HashMap<String, String>()));		
 		
 		AuthorizationPlugin authorizationPlugin = Mockito.mock(AuthorizationPlugin.class);
 		Mockito.when(authorizationPlugin.isAuthorized(Mockito.any(Token.class))).thenReturn(true);
@@ -99,7 +96,7 @@ public class TestGetOrder {
 		facade = this.orderHelper.initializeComponentExecutorSameThread(computePlugin, identityPlugin,
 				authorizationPlugin, benchmarkingPlugin, mapperPlugin);
 	}
-
+ 
 	@Test
 	public void testGetOrderContent() throws URISyntaxException, HttpException, IOException {
 		HttpGet get = new HttpGet(OCCITestHelper.URI_FOGBOW_ORDER);
@@ -256,6 +253,17 @@ public class TestGetOrder {
 
 	@Test
 	public void testGetResquestManyIdsDefaultAccept() throws URISyntaxException, HttpException, IOException {
+		HttpGet get = new HttpGet(OCCITestHelper.URI_FOGBOW_ORDER);
+		get.addHeader(OCCIHeaders.CONTENT_TYPE, OCCIHeaders.OCCI_CONTENT_TYPE);
+		get.addHeader(OCCIHeaders.X_AUTH_TOKEN, OCCITestHelper.ACCESS_TOKEN);
+		HttpClient client = HttpClients.createMinimal();
+		HttpResponse response = client.execute(get);
+		//Default accept is text/plain
+		Assert.assertTrue(response.getFirstHeader(OCCIHeaders.CONTENT_TYPE).getValue()
+				.startsWith(OCCIHeaders.TEXT_PLAIN_CONTENT_TYPE));
+		Assert.assertEquals(HttpStatus.SC_OK, response.getStatusLine().getStatusCode());
+		Assert.assertEquals(0, OCCITestHelper.getLocationIds(response).size());
+		
 		// Post
 		HttpPost post = new HttpPost(OCCITestHelper.URI_FOGBOW_ORDER);
 		Category category = new Category(OrderConstants.TERM, OrderConstants.SCHEME,
@@ -264,13 +272,13 @@ public class TestGetOrder {
 		post.addHeader(OCCIHeaders.X_AUTH_TOKEN, OCCITestHelper.ACCESS_TOKEN);
 		post.addHeader(OCCIHeaders.CATEGORY, category.toHeader());
 		post.addHeader(OCCIHeaders.X_OCCI_ATTRIBUTE, OrderAttribute.INSTANCE_COUNT.getValue()
-				+ " = 30");
+				+ " = 10");
 		post.addHeader(OCCIHeaders.X_OCCI_ATTRIBUTE,
 				OrderAttribute.RESOURCE_KIND.getValue() + "=" + OrderConstants.COMPUTE_TERM);		
-		HttpClient client = HttpClients.createMinimal();
-		HttpResponse response = client.execute(post);
+		client = HttpClients.createMinimal();
+		response = client.execute(post);
 		// Get
-		HttpGet get = new HttpGet(OCCITestHelper.URI_FOGBOW_ORDER);
+		get = new HttpGet(OCCITestHelper.URI_FOGBOW_ORDER);
 		get.addHeader(OCCIHeaders.CONTENT_TYPE, OCCIHeaders.OCCI_CONTENT_TYPE);
 		get.addHeader(OCCIHeaders.X_AUTH_TOKEN, OCCITestHelper.ACCESS_TOKEN);
 		client = HttpClients.createMinimal();
@@ -279,7 +287,7 @@ public class TestGetOrder {
 		Assert.assertTrue(response.getFirstHeader(OCCIHeaders.CONTENT_TYPE).getValue()
 				.startsWith(OCCIHeaders.TEXT_PLAIN_CONTENT_TYPE));
 		Assert.assertEquals(HttpStatus.SC_OK, response.getStatusLine().getStatusCode());
-		Assert.assertEquals(30, OCCITestHelper.getLocationIds(response).size());
+		Assert.assertEquals(10, OCCITestHelper.getLocationIds(response).size());
 	}
 	
 	@Test
@@ -292,7 +300,7 @@ public class TestGetOrder {
 		post.addHeader(OCCIHeaders.X_AUTH_TOKEN, OCCITestHelper.ACCESS_TOKEN);
 		post.addHeader(OCCIHeaders.CATEGORY, category.toHeader());
 		post.addHeader(OCCIHeaders.X_OCCI_ATTRIBUTE, OrderAttribute.INSTANCE_COUNT.getValue()
-				+ " = 50");
+				+ " = 20");
 		post.addHeader(OCCIHeaders.X_OCCI_ATTRIBUTE,
 				OrderAttribute.RESOURCE_KIND.getValue() + "=" + OrderConstants.COMPUTE_TERM);		
 		HttpClient client = HttpClients.createMinimal();
@@ -306,7 +314,7 @@ public class TestGetOrder {
 		response = client.execute(get);
 
 		Assert.assertEquals(HttpStatus.SC_OK, response.getStatusLine().getStatusCode());
-		Assert.assertEquals(50, OCCITestHelper.getURIList(response).size());
+		Assert.assertEquals(20, OCCITestHelper.getURIList(response).size());
 		Assert.assertTrue(response.getFirstHeader(OCCIHeaders.CONTENT_TYPE).getValue()
 				.startsWith(OCCIHeaders.TEXT_URI_LIST_CONTENT_TYPE));
 	}
@@ -457,7 +465,7 @@ public class TestGetOrder {
 		get = new HttpGet(OCCITestHelper.URI_FOGBOW_ORDER);
 		get.addHeader(OCCIHeaders.CONTENT_TYPE, OCCIHeaders.OCCI_CONTENT_TYPE);
 		get.addHeader(OCCIHeaders.X_AUTH_TOKEN, OCCITestHelper.ACCESS_TOKEN);
-		get.addHeader(OCCIHeaders.X_OCCI_ATTRIBUTE, "org.fogbowcloud.request.type=\"one-time\"");
+		get.addHeader(OCCIHeaders.X_OCCI_ATTRIBUTE, OrderAttribute.TYPE.getValue() + "=\"one-time\"");
 		client = HttpClients.createMinimal();
 		response = client.execute(get);
 
@@ -468,7 +476,7 @@ public class TestGetOrder {
 		get = new HttpGet(OCCITestHelper.URI_FOGBOW_ORDER);
 		get.addHeader(OCCIHeaders.CONTENT_TYPE, OCCIHeaders.OCCI_CONTENT_TYPE);
 		get.addHeader(OCCIHeaders.X_AUTH_TOKEN, OCCITestHelper.ACCESS_TOKEN);
-		get.addHeader(OCCIHeaders.X_OCCI_ATTRIBUTE, "org.fogbowcloud.request.type=\"notfound\"");
+		get.addHeader(OCCIHeaders.X_OCCI_ATTRIBUTE, OrderAttribute.TYPE.getValue() + "=\"notfound\"");
 		client = HttpClients.createMinimal();
 		response = client.execute(get);
 		
@@ -535,23 +543,17 @@ public class TestGetOrder {
 		HashMap<String, String> attributes = new HashMap<String, String>();
 		attributes.put(OCCIConstants.NETWORK_ADDRESS, networkAddress);
 		attributes.put(OCCIConstants.NETWORK_GATEWAY, networkGateway);
-		Token federationToken = new Token("1", OCCITestHelper.ACCESS_TOKEN, new Date(), attributes);
 		
-		Category category =  new Category(OrderConstants.TERM, OrderConstants.SCHEME,
-				OrderConstants.KIND_CLASS);
+		Token federationToken = new Token("1", 
+				new Token.User(OCCITestHelper.USER_MOCK, ""), new Date(), attributes);
 		
 		List<Category> categories = new ArrayList<Category>();
 		
 		Order order = new Order(orderId, federationToken, instanceId, "", "", new Date().getTime(),
 				true, OrderState.OPEN, categories, attributes);
 		
-		
-		
-		OrderRepository orderRepository = new OrderRepository();
-		orderRepository.addOrder(OCCITestHelper.USER_MOCK, order);
-		
-		facade.setOrders(orderRepository);
-		HttpGet get = new HttpGet(OCCITestHelper.URI_FOGBOW_ORDER+orderId);
+		facade.getManagerDataStoreController().addOrder(order);		
+		HttpGet get = new HttpGet(OCCITestHelper.URI_FOGBOW_ORDER + orderId);
 		get.addHeader(OCCIHeaders.CONTENT_TYPE, OCCIHeaders.OCCI_CONTENT_TYPE);
 		get.addHeader(OCCIHeaders.X_AUTH_TOKEN, OCCITestHelper.ACCESS_TOKEN);
 		HttpClient client = HttpClients.createMinimal();
@@ -561,10 +563,12 @@ public class TestGetOrder {
 		responseStr = EntityUtils.toString(response.getEntity(), String.valueOf(Charsets.UTF_8));
 		
 		Assert.assertEquals(0, OCCITestHelper.getLocationIds(response).size());
-		Assert.assertEquals("\""+networkAddress+"\"", OCCITestHelper.getOCCIAttByBodyString(responseStr, OCCIConstants.NETWORK_ADDRESS));
-		Assert.assertEquals("\""+networkGateway+"\"", OCCITestHelper.getOCCIAttByBodyString(responseStr, OCCIConstants.NETWORK_GATEWAY));
+		Assert.assertEquals("\"" + networkAddress + "\"", OCCITestHelper
+				.getOCCIAttByBodyString(responseStr, OCCIConstants.NETWORK_ADDRESS));
+		Assert.assertEquals("\"" + networkGateway + "\"", OCCITestHelper
+				.getOCCIAttByBodyString(responseStr, OCCIConstants.NETWORK_GATEWAY));
 		
-		for(String attrib : OCCIConstants.getValues()){
+		for(String attrib : OCCIConstants.getOCCIValues()){
 			if(!OCCIConstants.NETWORK_ADDRESS.equals(attrib) && !OCCIConstants.NETWORK_GATEWAY.equals(attrib)){
 				Assert.assertEquals("\"Not defined\"", OCCITestHelper.getOCCIAttByBodyString(responseStr, attrib));
 			}
@@ -575,6 +579,8 @@ public class TestGetOrder {
 	
 	@After
 	public void tearDown() throws Exception {
+		TestDataStorageHelper.clearManagerDataStore(
+				this.facade.getManagerDataStoreController().getManagerDatabase());
 		this.orderHelper.stopComponent();
 	}
 

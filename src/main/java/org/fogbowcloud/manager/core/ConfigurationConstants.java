@@ -2,8 +2,12 @@ package org.fogbowcloud.manager.core;
 
 public class ConfigurationConstants {
 
+	public static final String INFRA_CONF_FILE = "infrastructure_conf_file";  
+	public static final String FEDERATION_CONF_FILE = "federation_conf_file";
+	
 	// xmpp
 	public static final String XMPP_JID_KEY = "xmpp_jid";
+	public static final String XMPP_TIMEOUT = "xmpp_timeout";
 	public static final String XMPP_PASS_KEY = "xmpp_password";
 	public static final String XMPP_HOST_KEY = "xmpp_host";
 	public static final String XMPP_PORT_KEY = "xmpp_port";
@@ -32,15 +36,15 @@ public class ConfigurationConstants {
 	public static final String OCCI_EXTRA_RESOURCES_PREFIX = "occi_extra_resource_";
 
 	// periods
-	public static final String BD_UPDATER_PERIOD_KEY = "bd_updater_period";
 	public static final String SCHEDULER_PERIOD_KEY = "scheduler_period";
 	public static final String INSTANCE_MONITORING_PERIOD_KEY = "instance_monitoring_period";
 	public static final String TOKEN_UPDATE_PERIOD_KEY = "token_update_period";
-	public static final String SERVED_ORDER_MONITORING_PERIOD_KEY = "served_request_monitoring_period";
+	public static final String SERVED_ORDER_MONITORING_PERIOD_KEY = "served_order_monitoring_period";
 	public static final String GARBAGE_COLLECTOR_PERIOD_KEY = "garbage_collector_period";
 	public static final String ACCOUNTING_UPDATE_PERIOD_KEY = "accounting_update_period";
 	public static final String CAPACITY_CONTROLLER_UPDATE_PERIOD_KEY = "capacity_controller_update_period";
 	public static final String ASYNC_ORDER_WAITING_INTERVAL_KEY = "async_request_waiting_interval";
+	public static final String MAXIMUM_ORDER_ATTEMPTS_PROPERTIES = ManagerControllerHelper.MonitoringHelper.MAXIMUM_ORDER_ATTEMPTS_PROPERTIES;
 
 	// token host
 	public static final String TOKEN_HOST_PRIVATE_ADDRESS_KEY = "token_host_private_address";

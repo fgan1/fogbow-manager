@@ -4,13 +4,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.fogbowcloud.manager.core.ManagerTestHelper;
 import org.fogbowcloud.manager.core.util.DefaultDataTestHelper;
-import org.fogbowcloud.manager.core.util.ManagerTestHelper;
 import org.fogbowcloud.manager.occi.model.ErrorType;
 import org.fogbowcloud.manager.occi.model.OCCIException;
 import org.fogbowcloud.manager.occi.model.Token;
 import org.fogbowcloud.manager.occi.storage.StorageAttribute;
-import org.fogbowcloud.manager.occi.storage.StorageLinkRepository.StorageLink;
+import org.fogbowcloud.manager.occi.storage.StorageLink;
 import org.fogbowcloud.manager.occi.util.OCCITestHelper;
 import org.jivesoftware.smack.XMPPException;
 import org.junit.After;
@@ -44,8 +44,8 @@ public class TestDeleteRemoteStorageLink {
 		xOCCIAtt.put(StorageAttribute.SOURCE.getValue(), source);
 		xOCCIAtt.put(StorageAttribute.DEVICE_ID.getValue(), deviceId);
 
-		Token federationToken = new Token("accessId", OCCITestHelper.USER_MOCK,
-				DefaultDataTestHelper.TOKEN_FUTURE_EXPIRATION,
+		Token federationToken = new Token("accessId", new Token.User(OCCITestHelper.USER_MOCK, 
+				OCCITestHelper.USER_MOCK), DefaultDataTestHelper.TOKEN_FUTURE_EXPIRATION,
 				new HashMap<String, String>());
 		
 		StorageLink storageLink = new StorageLink("id", source, target, deviceId);
@@ -72,7 +72,7 @@ public class TestDeleteRemoteStorageLink {
 				.when(managerTestHelper.getComputePlugin())
 				.dettach(Mockito.any(Token.class), Mockito.any(List.class), Mockito.anyMap());
 
-		Token federationToken = new Token("accessId", OCCITestHelper.USER_MOCK,
+		Token federationToken = new Token("accessId", new Token.User(OCCITestHelper.USER_MOCK, ""),
 				DefaultDataTestHelper.TOKEN_FUTURE_EXPIRATION,
 				new HashMap<String, String>());
 		

@@ -23,12 +23,11 @@ import org.fogbowcloud.manager.occi.model.ResourceRepository;
 import org.fogbowcloud.manager.occi.model.ResponseConstants;
 import org.fogbowcloud.manager.occi.order.Order;
 import org.fogbowcloud.manager.occi.order.OrderConstants;
-import org.fogbowcloud.manager.occi.storage.StorageLinkRepository.StorageLink;
+import org.restlet.data.Header;
 import org.restlet.data.MediaType;
 import org.restlet.data.Status;
 import org.restlet.engine.adapter.HttpRequest;
 import org.restlet.engine.adapter.ServerCall;
-import org.restlet.data.Header;
 import org.restlet.representation.StringRepresentation;
 import org.restlet.resource.Delete;
 import org.restlet.resource.Get;
@@ -269,7 +268,7 @@ public class StorageLinkServerResource extends ServerResource {
 		
 		OCCIApplication application = (OCCIApplication) getApplication();
 		
-		String user = application.getUser(normalizeAuthToken(federationAuthToken));
+		String user = application.getUserId(normalizeAuthToken(federationAuthToken));
 		
 		if(target != null && target.startsWith(StorageServerResource.FED_STORAGE_PREFIX)){
 			FedStorageState fedStorageState = storageDB.getByStorageId(target, user);
@@ -298,7 +297,7 @@ public class StorageLinkServerResource extends ServerResource {
 		
 		OCCIApplication application = (OCCIApplication) getApplication();
 		
-		String user = application.getUser(normalizeAuthToken(federationAuthToken));
+		String user = application.getUserId(normalizeAuthToken(federationAuthToken));
 		
 		if(target != null){
 			FedStorageState fedStorageState = storageDB.getByGlobalId(target, user);

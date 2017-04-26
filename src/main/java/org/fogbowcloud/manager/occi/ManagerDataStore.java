@@ -16,14 +16,17 @@ import org.apache.log4j.Logger;
 import org.fogbowcloud.manager.occi.model.Token;
 import org.fogbowcloud.manager.occi.order.Order;
 import org.fogbowcloud.manager.occi.order.OrderState;
-import org.fogbowcloud.manager.occi.storage.StorageLinkRepository.StorageLink;
+import org.fogbowcloud.manager.occi.storage.StorageLink;
 import org.json.JSONException;
+import org.json.JSONObject;
+import org.sqlite.SQLiteConfig;
 
 public class ManagerDataStore {
 
+	public static final String ERROR_WHILE_INITIALIZING_THE_DATA_STORE = "Error while initializing the Manager DataStore.";
 	private static final Logger LOGGER = Logger.getLogger(ManagerDataStore.class);
-	protected static final String MANAGER_DATASTORE_URL = "manager_datastore_url";
-	protected static final String MANAGER_DATASTORE_URL_DEFAULT = "jdbc:sqlite:/tmp/dbManagerSQLite.db";
+	public static final String MANAGER_DATASTORE_URL = "manager_datastore_url";
+	private static final String DEFAULT_DATASTORE_NAME = "datastore_manager.slite";
 	protected static final String MANAGER_DATASTORE_SQLITE_DRIVER = "org.sqlite.JDBC";
 	protected static final String ORDER_TABLE_NAME = "t_order";
 	protected static final String ORDER_ID = "order_id";
@@ -34,31 +37,38 @@ public class ManagerDataStore {
 	protected static final String FULFILLED_TIME = "fulfilled_time";
 	protected static final String IS_LOCAL = "is_local";
 	protected static final String STATE = "state";
+	protected static final String RESOURCE_KIND = "resource_kind";
 	protected static final String CATEGORIES = "categories";
 	protected static final String XOCCI_ATTRIBUTES = "xocci_attributes";
 	protected static final String UPDATED = "updated";
+	protected static final String SYNCRONOUS_STATUS = "asyncronous_status";
+	protected static final String SYNCRONOUS_TIMESTAMP = "asyncronous_timestamp";
 	
 	protected static final String STORAGELINK_TABLE_NAME = "t_storagelink";
 	protected static final String STORAGELINK_ID = "storage_link_id";
 	protected static final String TARGET = "target";
 	protected static final String DEVICE_ID = "device_id";
 	protected static final String SOURCE = "source";
+	protected static final String FEDERATION_MEMBER_SERVERED_TABLE_NAME = "t_federation_member_servered";
+	protected static final String FEDERTION_MEMBER_ID = "federation_member_id";
 	
 	private String dataStoreURL;
 
 	public ManagerDataStore(Properties properties) {
-		this.dataStoreURL = properties.getProperty(MANAGER_DATASTORE_URL, MANAGER_DATASTORE_URL_DEFAULT);
+		String dataStoreURLProperties = properties.getProperty(MANAGER_DATASTORE_URL);
+		this.dataStoreURL = DataStoreHelper.getDataStoreUrl(dataStoreURLProperties,
+				DEFAULT_DATASTORE_NAME);
 		
 		Statement statement = null;
 		Connection connection = null;
 		try {
-			LOGGER.debug("DatastoreURL: " + dataStoreURL);
+			LOGGER.debug("DatastoreURL: " + dataStoreURLProperties);
 			LOGGER.debug("DatastoreDriver: " + MANAGER_DATASTORE_SQLITE_DRIVER);
 
 			Class.forName(MANAGER_DATASTORE_SQLITE_DRIVER);
 
 			connection = getConnection();
-			statement = connection.createStatement();
+			statement = connection.createStatement();		
 			statement.execute("CREATE TABLE IF NOT EXISTS " + ORDER_TABLE_NAME + "(" 
 							+ ORDER_ID + " VARCHAR(255) PRIMARY KEY, "
 							+ INSTANCE_ID + " VARCHAR(255), "
@@ -70,6 +80,8 @@ public class ManagerDataStore {
 							+ STATE + " VARCHAR(255), "
 							+ CATEGORIES + " TEXT, "
 							+ UPDATED + " TIMESTAMP, "
+							+ SYNCRONOUS_STATUS + " BOOLEAN, "
+							+ SYNCRONOUS_TIMESTAMP + " TIMESTAMP, "
 							+ XOCCI_ATTRIBUTES + " TEXT)");
 			statement.execute("CREATE TABLE IF NOT EXISTS " + STORAGELINK_TABLE_NAME + "(" 
 							+ STORAGELINK_ID + " VARCHAR(255) PRIMARY KEY, "
@@ -79,9 +91,15 @@ public class ManagerDataStore {
 							+ FEDERATION_TOKEN + " TEXT, "
 							+ PROVIDING_MEMBER_ID + " VARCHAR(255), "
 							+ IS_LOCAL + " BOOLEAN)");			
+			statement.execute("CREATE TABLE IF NOT EXISTS " + FEDERATION_MEMBER_SERVERED_TABLE_NAME + "(" 
+							+ FEDERTION_MEMBER_ID + " VARCHAR(255) NOT NULL, "
+							+ ORDER_ID + " VARCHAR(255) NOT NULL, "
+							+ "FOREIGN KEY (" + ORDER_ID + ") REFERENCES " 
+							+ ORDER_TABLE_NAME + "(" + ORDER_ID + ") ON DELETE CASCADE)");			
 			statement.close();
 		} catch (Exception e) {
-			LOGGER.error("Error while initializing the DataStore.", e);
+			LOGGER.error(ERROR_WHILE_INITIALIZING_THE_DATA_STORE, e);
+			throw new Error(ERROR_WHILE_INITIALIZING_THE_DATA_STORE, e);
 		} finally {
 			close(statement, connection);
 		}
@@ -112,13 +130,13 @@ public class ManagerDataStore {
 					order.getState().toString() : null);
 			orderStmt.setString(9, JSONHelper.mountCategoriesJSON(order.getCategories()).toString());
 			orderStmt.setTimestamp(10, new Timestamp(new Date().getTime()));
-			orderStmt.setString(11, JSONHelper.mountXOCCIAttrJSON(order.getxOCCIAtt()).toString());
+			JSONObject xOCCIAtt = JSONHelper.mountXOCCIAttrJSON(order.getxOCCIAtt());
+			orderStmt.setString(11, xOCCIAtt != null ? xOCCIAtt.toString() : null);
 			orderStmt.executeUpdate();
 			
 			connection.commit();
 			return true;
 		} catch (SQLException e) {
-			e.printStackTrace();
 			LOGGER.error("Couldn't create order.", e);
 			try {
 				if (connection != null) {
@@ -135,10 +153,14 @@ public class ManagerDataStore {
 	
 	private static final String GET_ORDERS_SQL = "SELECT " + ORDER_ID + ", " + INSTANCE_ID + ", "
 			+ PROVIDING_MEMBER_ID + ", " + REQUESTING_MEMBER_ID + ", " + FEDERATION_TOKEN + ", " + FULFILLED_TIME + ", " 
-			+ IS_LOCAL + ", " + STATE + ", " + CATEGORIES + ", " + XOCCI_ATTRIBUTES
-			+ " FROM " + ORDER_TABLE_NAME;
+			+ IS_LOCAL + ", " + STATE + ", " + CATEGORIES + ", " + XOCCI_ATTRIBUTES + ", " + SYNCRONOUS_TIMESTAMP
+			+ ", " + SYNCRONOUS_STATUS + " FROM " + ORDER_TABLE_NAME;
 	
 	public List<Order> getOrders() throws SQLException, JSONException {
+		return getOrders(null);
+	}
+	
+	public List<Order> getOrders(OrderState orderState) throws SQLException, JSONException {
 		PreparedStatement ordersStmt = null;
 		Connection connection = null;
 		List<Order> orders = new ArrayList<Order>();
@@ -147,24 +169,33 @@ public class ManagerDataStore {
 			connection.setAutoCommit(false);
 			
 			String ordersStmtStr = GET_ORDERS_SQL;
+			if (orderState != null) {
+				ordersStmtStr += " WHERE " + STATE + "=?";
+			}
 			
 			ordersStmt = connection.prepareStatement(ordersStmtStr);
+			if (orderState != null) {
+				ordersStmt.setString(1, orderState.toString());		
+			}
 			ResultSet resultSet = ordersStmt.executeQuery();
 			while (resultSet.next()) {
 				resultSet.getString(1);
 				
-				orders.add(new Order(resultSet.getString(1), Token.fromJSON(resultSet
+				Order order = new Order(resultSet.getString(1), Token.fromJSON(resultSet
 						.getString(5)), resultSet.getString(2), resultSet.getString(3), resultSet
 						.getString(4), resultSet.getLong(6), resultSet.getBoolean(7), OrderState
 						.getState(resultSet.getString(8)), JSONHelper.getCategoriesFromJSON(resultSet
-						.getString(9)), JSONHelper.getXOCCIAttrFromJSON(resultSet.getString(10))));
+						.getString(9)), JSONHelper.getXOCCIAttrFromJSON(resultSet.getString(10)));
+				order.setSyncronousTime(resultSet.getLong(11));
+				order.setSyncronousStatus(resultSet.getBoolean(12));
+				
+				orders.add(order);
 			}
 					
 			connection.commit();
 			
 			return orders;
 		} catch (SQLException e) {
-			e.printStackTrace();
 			LOGGER.error("Couldn't retrieve orders.", e);
 			try {
 				if (connection != null) {
@@ -177,6 +208,62 @@ public class ManagerDataStore {
 			close(ordersStmt, connection);
 		}
 		return orders;
+	}		
+	
+	private static final String GET_SPECIFIC_ORDER_SQL = GET_ORDERS_SQL + " WHERE " + ORDER_ID + "=?";
+			
+	public Order getOrder(String orderId) throws SQLException, JSONException  {
+		return getOrder(orderId, false);
+	}
+	
+	public Order getOrder(String orderId, boolean isOrderSyncronous) throws SQLException, JSONException  {
+		PreparedStatement ordersStmt = null;
+		Connection connection = null;
+		Order order = null;
+		try {
+			connection = getConnection();
+			connection.setAutoCommit(false);
+			
+			String specificOrderStmtStr = GET_SPECIFIC_ORDER_SQL;
+			
+			if (isOrderSyncronous) {
+				specificOrderStmtStr += " AND " + SYNCRONOUS_STATUS + "=?";
+			}
+			
+			ordersStmt = connection.prepareStatement(specificOrderStmtStr);
+			ordersStmt.setString(1, orderId);
+			if (isOrderSyncronous) {
+				ordersStmt.setBoolean(2, isOrderSyncronous);
+			}
+			ResultSet resultSet = ordersStmt.executeQuery();
+			if (resultSet.next()) {
+				resultSet.getString(1);
+				
+				order = new Order(resultSet.getString(1), Token.fromJSON(resultSet
+						.getString(5)), resultSet.getString(2), resultSet.getString(3), resultSet
+						.getString(4), resultSet.getLong(6), resultSet.getBoolean(7), OrderState
+						.getState(resultSet.getString(8)), JSONHelper.getCategoriesFromJSON(resultSet
+						.getString(9)), JSONHelper.getXOCCIAttrFromJSON(resultSet.getString(10)));
+				order.setSyncronousTime(resultSet.getLong(11));
+				order.setSyncronousStatus(resultSet.getBoolean(12));
+			}
+					
+			connection.commit();
+			
+			return order;
+		} catch (SQLException e) {
+			LOGGER.error("Couldn't retrieve order.", e);
+			try {
+				if (connection != null) {
+					connection.rollback();
+				}
+			} catch (SQLException e1) {
+				LOGGER.error("Couldn't rollback transaction.", e1);
+			}
+		} finally {
+			close(ordersStmt, connection);
+		}
+		return null;
 	}	
 
 	private static final String REMOVE_ORDER_SQL = "DELETE"
@@ -197,7 +284,6 @@ public class ManagerDataStore {
 			connection.commit();
 			return true;
 		} catch (SQLException e) {
-			e.printStackTrace();
 			LOGGER.error("Couldn't remove order.", e);
 			try {
 				if (connection != null) {
@@ -228,7 +314,6 @@ public class ManagerDataStore {
 			connection.commit();
 			return true;
 		} catch (SQLException e) {
-			e.printStackTrace();
 			LOGGER.error("Couldn't remove all order.", e);
 			try {
 				if (connection != null) {
@@ -274,7 +359,6 @@ public class ManagerDataStore {
 			connection.commit();
 			return true;
 		} catch (SQLException e) {
-			e.printStackTrace();
 			LOGGER.error("Couldn't update order.", e);
 			try {
 				if (connection != null) {
@@ -287,8 +371,43 @@ public class ManagerDataStore {
 			close(updateOrderStmt, connection);
 		}
 		return false;
-	}	
+	}
 	
+	private static final String UPDATE_ORDER_ASYNCRONOUS_SQL = "UPDATE " + ORDER_TABLE_NAME + " SET "
+			+ SYNCRONOUS_TIMESTAMP + "=? , " + SYNCRONOUS_STATUS + "=?" + " WHERE " + ORDER_ID + "=?";
+	
+	public boolean updateOrderAsyncronous(String orderId, long syncronousTime, boolean syncronousStatus) throws SQLException, JSONException {
+		PreparedStatement updateOrderStmt = null;
+		Connection connection = null;
+		try {
+			connection = getConnection();
+			connection.setAutoCommit(false);
+			
+			updateOrderStmt = connection.prepareStatement(UPDATE_ORDER_ASYNCRONOUS_SQL);
+			updateOrderStmt.setTimestamp(1, new Timestamp(syncronousTime));
+			updateOrderStmt.setBoolean(2, syncronousStatus);
+			updateOrderStmt.setString(3, orderId);
+			updateOrderStmt.executeUpdate();
+			
+			connection.commit();
+			return true;
+		} catch (SQLException e) {
+			LOGGER.error("Couldn't update order asyncronous.", e);
+			try {
+				if (connection != null) {
+					connection.rollback();
+				}
+			} catch (SQLException e1) {
+				LOGGER.error("Couldn't rollback transaction.", e1);
+			}
+		} catch (Exception e) {
+			
+		} finally {
+			close(updateOrderStmt, connection);
+		}
+		return false;
+	}
+		
 	private static final String COUNT_ORDER_SQL = "SELECT COUNT(*) FROM " + ORDER_TABLE_NAME;	
 
 	public int countOrder(List<OrderState> orderStates) throws SQLException, JSONException {
@@ -317,7 +436,6 @@ public class ManagerDataStore {
 			
 			connection.commit();
 		} catch (SQLException e) {
-			e.printStackTrace();
 			LOGGER.error("Couldn't count order.", e);
 			try {
 				if (connection != null) {
@@ -333,8 +451,7 @@ public class ManagerDataStore {
 	}	
 	
 	/**
-	 * @return the connection
-	 * @throws SQLException
+	 * Storage Link
 	 */
 	
 	private static final String INSERT_STORAGELINK_SQL = "INSERT INTO " + STORAGELINK_TABLE_NAME
@@ -492,9 +609,167 @@ public class ManagerDataStore {
 		return false;
 	}	
 	
+	/**
+	 * Federation member servered
+	 */	
+	
+	private static final String INSERT_FEDERATION_MEMBER_SERVERED_SQL = "INSERT INTO " + 
+			FEDERATION_MEMBER_SERVERED_TABLE_NAME + " (" + FEDERTION_MEMBER_ID + "," + ORDER_ID + ")"			
+			+ " VALUES (?,?)";
+	
+	public boolean addFederationMemberServered(String orderId, String federationMemberServerd) throws SQLException, JSONException {
+		PreparedStatement federationMemberStmt = null;
+		Connection connection = null;
+		try {
+			connection = getConnection();
+			connection.setAutoCommit(false);
+			
+			federationMemberStmt = connection.prepareStatement(INSERT_FEDERATION_MEMBER_SERVERED_SQL);
+			federationMemberStmt.setString(1, federationMemberServerd);
+			federationMemberStmt.setString(2, orderId);
+			federationMemberStmt.executeUpdate();
+			
+			connection.commit();
+			return true;
+		} catch (SQLException e) {
+			LOGGER.error("Couldn't create federation member.", e);
+			try {
+				if (connection != null) {
+					connection.rollback();
+				}
+			} catch (SQLException e1) {
+				LOGGER.error("Couldn't rollback transaction.", e1);
+			}
+		} finally {
+			close(federationMemberStmt, connection);
+		}
+		return false;
+	}
+	
+	private static final String GET_FEDERATION_MEMBERS_SQL = "SELECT " + FEDERTION_MEMBER_ID
+			+ " FROM " + FEDERATION_MEMBER_SERVERED_TABLE_NAME 
+			+ " WHERE " + ORDER_ID + "=?";
+	
+	public List<String> getFederationMembersServeredBy(String orderId) throws SQLException, JSONException {
+		PreparedStatement federationMemStmt = null;
+		Connection connection = null;
+		List<String> federationMembersServered = new ArrayList<String>();
+		try {
+			connection = getConnection();
+			connection.setAutoCommit(false);
+			
+			String ordersStmtStr = GET_FEDERATION_MEMBERS_SQL;
+			
+			federationMemStmt = connection.prepareStatement(ordersStmtStr);
+			federationMemStmt.setString(1, orderId);
+			ResultSet resultSet = federationMemStmt.executeQuery();
+			while (resultSet.next()) {
+				resultSet.getString(1);
+				
+				String fedMember = resultSet.getString(1);
+				if (!federationMembersServered.contains(fedMember)) {					
+					federationMembersServered.add(fedMember);
+				}
+			}
+					
+			connection.commit();
+			
+			return federationMembersServered;
+		} catch (SQLException e) {
+			LOGGER.error("Couldn't retrieve federation members serverd.", e);
+			try {
+				if (connection != null) {
+					connection.rollback();
+				}
+			} catch (SQLException e1) {
+				LOGGER.error("Couldn't rollback transaction.", e1);
+			}
+		} finally {
+			close(federationMemStmt, connection);
+		}
+		return federationMembersServered;
+	}	
+	
+	private static final String REMOVE_FEDERATION_MEMBER_SERVERED_SQL = "DELETE"
+			+ " FROM " + FEDERATION_MEMBER_SERVERED_TABLE_NAME 
+			+ " WHERE " + FEDERTION_MEMBER_ID + " = ?";
+	
+	public boolean removeFederationMemberServed(String federationMemberServered) throws SQLException {
+		PreparedStatement removeFederationMemberServeredStmt = null;
+		Connection connection = null;
+		try {
+			connection = getConnection();
+			connection.setAutoCommit(false);
+			
+			removeFederationMemberServeredStmt = connection
+					.prepareStatement(REMOVE_FEDERATION_MEMBER_SERVERED_SQL);
+			removeFederationMemberServeredStmt.setString(1, federationMemberServered);
+			removeFederationMemberServeredStmt.executeUpdate();
+			
+			connection.commit();
+			return true;
+		} catch (SQLException e) {
+			LOGGER.error("Couldn't remove federation member servered.", e);
+			try {
+				if (connection != null) {
+					connection.rollback();
+				}
+			} catch (SQLException e1) {
+				LOGGER.error("Couldn't rollback transaction.", e1);
+			}
+		} finally {
+			close(removeFederationMemberServeredStmt, connection);
+		}
+		return false;
+	}
+	
+	private static final String REMOVE_ALL_VALUES_FEDERATION_MEMBER_TABLE_SQL = "DELETE"
+			+ " FROM " + FEDERATION_MEMBER_SERVERED_TABLE_NAME;
+	private static final String REMOVE_ALL_VALUES_ORDER_TABLE_SQL = "DELETE"
+			+ " FROM " + ORDER_TABLE_NAME;
+	private static final String REMOVE_ALL_VALUES_STORAGELINK_TABLE_SQL = "DELETE"
+			+ " FROM " + STORAGELINK_TABLE_NAME;
+	
+	@SuppressWarnings("resource")
+	public boolean removeAllValuesInAllTable() {
+		PreparedStatement removeAllValueInAllTableStmt = null;
+		Connection connection = null;
+		try {
+			connection = getConnection();
+			connection.setAutoCommit(false);
+			
+			removeAllValueInAllTableStmt = connection.prepareStatement(REMOVE_ALL_VALUES_FEDERATION_MEMBER_TABLE_SQL);
+			removeAllValueInAllTableStmt.executeUpdate();
+			
+			removeAllValueInAllTableStmt = connection.prepareStatement(REMOVE_ALL_VALUES_ORDER_TABLE_SQL);
+			removeAllValueInAllTableStmt.executeUpdate();
+			
+			removeAllValueInAllTableStmt = connection.prepareStatement(REMOVE_ALL_VALUES_STORAGELINK_TABLE_SQL);
+			removeAllValueInAllTableStmt.executeUpdate();
+			
+			connection.commit();
+			return true;
+		} catch (SQLException e) {
+			LOGGER.error("Couldn't remove all values in all table servered.", e);
+			try {
+				if (connection != null) {
+					connection.rollback();
+				}
+			} catch (SQLException e1) {
+				LOGGER.error("Couldn't rollback transaction.", e1);
+			}
+		} finally {
+			close(removeAllValueInAllTableStmt, connection);
+		}
+		return false;		
+	}
+	
 	public Connection getConnection() throws SQLException {
 		try {
-			return DriverManager.getConnection(this.dataStoreURL);
+			SQLiteConfig config = new SQLiteConfig();
+			config.enforceForeignKeys(true);  
+			config.setBusyTimeout("30000");
+			return DriverManager.getConnection(this.dataStoreURL, config.toProperties());				
 		} catch (SQLException e) {
 			LOGGER.error("Error while getting a new connection from the connection pool.", e);
 			throw e;

@@ -10,14 +10,13 @@ import java.util.concurrent.TimeUnit;
 
 import org.fogbowcloud.manager.core.AsynchronousOrderCallback;
 import org.fogbowcloud.manager.core.ManagerController;
+import org.fogbowcloud.manager.core.ManagerTestHelper;
 import org.fogbowcloud.manager.core.util.DefaultDataTestHelper;
-import org.fogbowcloud.manager.core.util.ManagerTestHelper;
 import org.fogbowcloud.manager.occi.model.Category;
 import org.fogbowcloud.manager.occi.model.Token;
 import org.fogbowcloud.manager.occi.order.Order;
 import org.fogbowcloud.manager.occi.order.OrderAttribute;
 import org.fogbowcloud.manager.occi.order.OrderConstants;
-import org.fogbowcloud.manager.occi.order.OrderRepository;
 import org.fogbowcloud.manager.occi.util.OCCITestHelper;
 import org.jivesoftware.smack.XMPPException;
 import org.junit.After;
@@ -50,12 +49,10 @@ public class TestRemoveServeredOrder {
 	public void testRemoveServeredOrderResourceKingCompute() throws Exception {
 		ManagerXmppComponent initializeXMPPManagerComponent = managerTestHelper.initializeXMPPManagerComponent(false);
 		Order order = createOrder(OrderConstants.COMPUTE_TERM);
-		OrderRepository orders = new OrderRepository();
-		orders.addOrder(order.getFederationToken().getUser(), order);
 		ManagerController managerFacade = initializeXMPPManagerComponent.getManagerFacade();
-		managerFacade.setOrders(orders);
+		managerFacade.getManagerDataStoreController().addOrder(order);
 
-		Token token = new Token(ACCESS_ID, OCCITestHelper.USER_MOCK, null, new HashMap<String, String>());
+		Token token = new Token(ACCESS_ID, new Token.User(OCCITestHelper.USER_MOCK, ""), null, new HashMap<String, String>());
 		
 		Mockito.when(managerTestHelper.getFederationIdentityPlugin().getToken(ACCESS_ID))
 				.thenReturn(token);
@@ -101,12 +98,10 @@ public class TestRemoveServeredOrder {
 	public void testRemoveServeredOrderResourceKingStorage() throws Exception {
 		ManagerXmppComponent initializeXMPPManagerComponent = managerTestHelper.initializeXMPPManagerComponent(false);
 		Order order = createOrder(OrderConstants.STORAGE_TERM);
-		OrderRepository orders = new OrderRepository();
-		orders.addOrder(order.getFederationToken().getUser(), order);
 		ManagerController managerFacade = initializeXMPPManagerComponent.getManagerFacade();
-		managerFacade.setOrders(orders);
+		managerFacade.getManagerDataStoreController().addOrder(order);
 
-		Token token = new Token(ACCESS_ID, OCCITestHelper.USER_MOCK, null, new HashMap<String, String>());
+		Token token = new Token(ACCESS_ID, new Token.User(OCCITestHelper.USER_MOCK, ""), null, new HashMap<String, String>());
 		
 		Mockito.when(managerTestHelper.getFederationIdentityPlugin().getToken(ACCESS_ID))
 				.thenReturn(token);
@@ -153,7 +148,7 @@ public class TestRemoveServeredOrder {
 		attributes.put("key2", "value2");
 		attributes.put(OrderAttribute.RESOURCE_KIND.getValue(), resourceKing);
 		Order order = new Order(ORDER_ID, new Token(ACCESS_ID,
-				OCCITestHelper.USER_MOCK,
+				new Token.User(OCCITestHelper.USER_MOCK, ""),
 				DefaultDataTestHelper.TOKEN_FUTURE_EXPIRATION,
 				new HashMap<String, String>()), categories, attributes, false, DefaultDataTestHelper.LOCAL_MANAGER_COMPONENT_URL);
 		order.setInstanceId(INSTANCE_ID);

@@ -25,13 +25,13 @@ import org.fogbowcloud.manager.core.plugins.IdentityPlugin;
 import org.fogbowcloud.manager.core.plugins.ImageStoragePlugin;
 import org.fogbowcloud.manager.core.plugins.MapperPlugin;
 import org.fogbowcloud.manager.core.plugins.StoragePlugin;
+import org.fogbowcloud.manager.occi.TestDataStorageHelper;
 import org.fogbowcloud.manager.occi.model.OCCIHeaders;
 import org.fogbowcloud.manager.occi.model.Token;
 import org.fogbowcloud.manager.occi.order.Order;
 import org.fogbowcloud.manager.occi.order.OrderAttribute;
 import org.fogbowcloud.manager.occi.order.OrderConstants;
 import org.fogbowcloud.manager.occi.order.OrderState;
-import org.fogbowcloud.manager.occi.storage.StorageLinkRepository.StorageLink;
 import org.fogbowcloud.manager.occi.util.OCCITestHelper;
 import org.junit.After;
 import org.junit.Assert;
@@ -51,7 +51,6 @@ public class TestPostStorageLink {
 	private OCCITestHelper helper;
 	private ImageStoragePlugin imageStoragePlugin;
 	
-	@SuppressWarnings("unused")
 	private ManagerController facade;
 	private StoragePlugin storagePlugin;
 	private ComputePlugin computePlugin;
@@ -63,13 +62,13 @@ public class TestPostStorageLink {
 		storagePlugin = Mockito.mock(StoragePlugin.class);
 		
 		IdentityPlugin identityPlugin = Mockito.mock(IdentityPlugin.class);
-		Token tokenTwo = new Token("1", OCCITestHelper.USER_MOCK, new Date(),
+		Token tokenTwo = new Token("1", new Token.User(OCCITestHelper.USER_MOCK, ""), new Date(),
 		new HashMap<String, String>());
 		Mockito.when(identityPlugin.getToken(OCCITestHelper.ACCESS_TOKEN))
 				.thenReturn(tokenTwo);
 		Mockito.when(identityPlugin.getToken(OTHER_ACCESS_TOKEN))
 		.thenReturn(tokenTwo);		
-		Token otherToken = new Token("other", "other", null, null);
+		Token otherToken = new Token("other", new Token.User("other", ""), null, null);
 		Mockito.when(identityPlugin.getToken(OTHER_ACCESS_TOKEN)).thenReturn(otherToken);
 		Mockito.when(identityPlugin.isValid(OCCITestHelper.ACCESS_TOKEN)).thenReturn(true);	
 				
@@ -77,7 +76,7 @@ public class TestPostStorageLink {
 		computePlugin = Mockito.mock(ComputePlugin.class);
 
 		List<Order> orders = new LinkedList<Order>();
-		Token tokenUserOne = new Token("accessIdUserOne", "userOne", null, null);
+		Token tokenUserOne = new Token("accessIdUserOne", new Token.User("userOne", ""), null, null);
 		// storage
 		HashMap<String, String> xOCCIAttStorage = new HashMap<String, String>();
 		xOCCIAttStorage.put(OrderAttribute.RESOURCE_KIND.getValue(), OrderConstants.STORAGE_TERM);
@@ -110,7 +109,7 @@ public class TestPostStorageLink {
 		
 		imageStoragePlugin = Mockito.mock(ImageStoragePlugin.class);
 		
-		List<StorageLink> storageLinks = new ArrayList<StorageLinkRepository.StorageLink>();
+		List<StorageLink> storageLinks = new ArrayList<StorageLink>();
 		
 		Map<String, List<StorageLink>> storageLinksToAdd = new HashMap<String, List<StorageLink>>();
 		storageLinksToAdd.put(OCCITestHelper.USER_MOCK, storageLinks);			
@@ -136,6 +135,8 @@ public class TestPostStorageLink {
 
 	@After
 	public void tearDown() throws Exception {
+		TestDataStorageHelper.clearManagerDataStore(
+				facade.getManagerDataStoreController().getManagerDatabase());
 		File dbFile = new File(OCCITestHelper.INSTANCE_DB_FILE + ".mv.db");
 		if (dbFile.exists()) {
 			dbFile.delete();

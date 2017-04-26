@@ -25,7 +25,7 @@ import org.fogbowcloud.manager.occi.model.Resource;
 import org.fogbowcloud.manager.occi.model.ResponseConstants;
 import org.fogbowcloud.manager.occi.model.Token;
 import org.fogbowcloud.manager.occi.order.Order;
-import org.fogbowcloud.manager.occi.storage.StorageLinkRepository.StorageLink;
+import org.fogbowcloud.manager.occi.storage.StorageLink;
 import org.jamppa.component.PacketCallback;
 import org.jamppa.component.PacketSender;
 import org.xmpp.packet.IQ;
@@ -46,14 +46,16 @@ public class ManagerPacketHelper {
 	public static final String CPU_IN_USE = "cpuInUse";
 	public static final String CPU_IDLE = "cpuIdle";
 	
-	public static final String USER_EL = "user";
+	public static final String STORAGE_LINK_EL = "storageLink";	
 	public static final String ACCESS_ID_EL = "accessId";
-	public static final String TOKEN_EL = "token";
 	public static final String DEVICE_ID_EL = "deviceId";
 	public static final String SOURCE_EL = "source";
 	public static final String TARGET_EL = "target";
+	public static final String ORDER_EL = "order";
+	public static final String TOKEN_EL = "token";
+	public static final String NAME_EL = "name";
+	public static final String USER_EL = "user";
 	public static final String ID_EL = "id";
-	public static final String STORAGE_LINK_EL = "storageLink";	
 	
 	public static final String I_AM_ALIVE_PERIOD = "iamalive-period";
 	private final static Logger LOGGER = Logger.getLogger(ManagerPacketHelper.class.getName());
@@ -166,13 +168,17 @@ public class ManagerPacketHelper {
 			attributeEl.addAttribute("var", xOCCIEntry.getKey());
 			attributeEl.addElement("value").setText(xOCCIEntry.getValue());
 		}
-		Element orderEl = queryEl.addElement("request");
+		Element orderEl = queryEl.addElement(ORDER_EL);
 		orderEl.addElement(ID_EL).setText(orderId);
 
 		if (userFederationToken != null) {
 			Element tokenEl = queryEl.addElement(TOKEN_EL);
 			tokenEl.addElement(ACCESS_ID_EL).setText(userFederationToken.getAccessId());
-			tokenEl.addElement(USER_EL).setText(userFederationToken.getUser());
+			Element UserEl = tokenEl.addElement(USER_EL);
+			UserEl.addElement(ID_EL).setText(
+					userFederationToken.getUser().getId());
+			UserEl.addElement(NAME_EL).setText(
+					userFederationToken.getUser().getName());			
 		}
 
 		packetSender.addPacketCallback(iq, new PacketCallback() {
@@ -214,7 +220,11 @@ public class ManagerPacketHelper {
 		if (userFederationToken != null) {
 			Element tokenEl = queryEl.addElement(TOKEN_EL);
 			tokenEl.addElement(ACCESS_ID_EL).setText(userFederationToken.getAccessId());
-			tokenEl.addElement(USER_EL).setText(userFederationToken.getUser());
+			Element userEl = tokenEl.addElement(USER_EL);
+			userEl.addElement(ID_EL).setText(
+					userFederationToken.getUser().getId());
+			userEl.addElement(NAME_EL).setText(
+					userFederationToken.getUser().getName());		
 		}
 
 		IQ response = (IQ) packetSender.syncSendPacket(iq);
@@ -254,9 +264,8 @@ public class ManagerPacketHelper {
 
 		IQ response = (IQ) packetSender.syncSendPacket(iq);
 		if (response == null) {
-			throw new OCCIException(ErrorType.NOT_FOUND, ResponseConstants.NOT_FOUND);
+			throw new OCCIException(ErrorType.BAD_REQUEST, ResponseConstants.XMPP_RESPONSE_NULL);
 		}
-
 		if (response.getError() != null) {
 			raiseException(response.getError());
 		}
@@ -279,6 +288,9 @@ public class ManagerPacketHelper {
 		instanceEl.addElement(ID_EL).setText(order.getInstanceId());
 
 		IQ response = (IQ) packetSender.syncSendPacket(iq);
+		if (response == null) {
+			throw new OCCIException(ErrorType.BAD_REQUEST, ResponseConstants.XMPP_RESPONSE_NULL);
+		}
 		if (response.getError() != null) {
 			raiseException(response.getError());
 		}
@@ -304,10 +316,17 @@ public class ManagerPacketHelper {
 		if (userFederationToken != null) {
 			Element tokenEl = queryEl.addElement(TOKEN_EL);
 			tokenEl.addElement(ACCESS_ID_EL).setText(userFederationToken.getAccessId());
-			tokenEl.addElement(USER_EL).setText(userFederationToken.getUser());
+			Element userEl = tokenEl.addElement(USER_EL);
+			userEl.addElement(ID_EL).setText(
+					userFederationToken.getUser().getId());
+			userEl.addElement(NAME_EL).setText(
+					userFederationToken.getUser().getName());		
 		}
 		
-		IQ response = (IQ) packetSender.syncSendPacket(iq);			
+		IQ response = (IQ) packetSender.syncSendPacket(iq);
+		if (response == null) {
+			throw new OCCIException(ErrorType.BAD_REQUEST, ResponseConstants.XMPP_RESPONSE_NULL);
+		}
 		if (response.getError() != null) {
 			raiseException(response.getError());
 		}
@@ -427,13 +446,16 @@ public class ManagerPacketHelper {
 		iq.setTo(servedOrder.getRequestingMemberId());
 		iq.setType(Type.get);
 		Element queryEl = iq.getElement().addElement("query", ManagerXmppComponent.INSTANCEBEINGUSED_NAMESPACE);
-		Element orderEl = queryEl.addElement("request");
+		Element orderEl = queryEl.addElement(ORDER_EL);
 		orderEl.addElement(ID_EL).setText(servedOrder.getId());
 		if (instanceId != null) {
 			Element instanceEl = queryEl.addElement("instance");
 			instanceEl.addElement(ID_EL).setText(instanceId);
 		}
 		IQ response = (IQ) packetSender.syncSendPacket(iq);
+		if (response == null) {
+			throw new OCCIException(ErrorType.BAD_REQUEST, ResponseConstants.XMPP_RESPONSE_NULL);
+		}
 		if (response.getError() != null) {
 			raiseException(response.getError());
 		}
@@ -454,7 +476,8 @@ public class ManagerPacketHelper {
 			//TODO should every error return item_not_found?	
 			response.setError(Condition.item_not_found);
 		} else {
-			Element queryResponseEl = response.getElement().addElement("query", ManagerXmppComponent.ORDER_NAMESPACE);
+			Element queryResponseEl = response.getElement().addElement("query", 
+					ManagerXmppComponent.ORDER_NAMESPACE);
 			queryResponseEl.addElement("instance").addElement(ID_EL).setText(order.getInstanceId());
 		}
 		packetSender.sendPacket(response);
@@ -473,15 +496,19 @@ public class ManagerPacketHelper {
 		Element queryEl = iq.getElement().addElement("query", ManagerXmppComponent.GETREMOTEUSERQUOTA_NAMESPACE);
 		Element tokenEl = queryEl.addElement(TOKEN_EL);
 		tokenEl.addElement(ACCESS_ID_EL).setText(token.getAccessId());
-		tokenEl.addElement(USER_EL).setText(token.getUser());
+		Element userEl = tokenEl.addElement(USER_EL);
+		userEl.addElement(ID_EL).setText(token.getUser().getId());
+		userEl.addElement(NAME_EL).setText(token.getUser().getName());		
 
 		IQ response = (IQ) packetSender.syncSendPacket(iq);
+		if (response == null) {
+			throw new OCCIException(ErrorType.BAD_REQUEST, ResponseConstants.XMPP_RESPONSE_NULL);
+		}		
 		if (response.getError() != null) {
 			raiseException(response.getError());
 		}
 
-		return parseResourcesInfo(response.getElement().element("query").element("resourcesInfo"));
-		
+		return parseResourcesInfo(response.getElement().element("query").element("resourcesInfo"));		
 	}
 	
 	private static ResourcesInfo parseResourcesInfo(Element instanceEl) {
@@ -512,7 +539,7 @@ public class ManagerPacketHelper {
 		iq.setType(Type.set);
 		Element queryEl = iq.getElement().addElement("query",
 				ManagerXmppComponent.REMOVEORDER_NAMESPACE);
-		Element orderEl = queryEl.addElement("request");
+		Element orderEl = queryEl.addElement(ORDER_EL);
 		orderEl.addElement(ID_EL).setText(order.getId());
 		Element tokenEl = queryEl.addElement(TOKEN_EL);
 		tokenEl.addElement(ACCESS_ID_EL).setText(order.getFederationToken().getAccessId());

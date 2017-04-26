@@ -9,8 +9,8 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
 import org.fogbowcloud.manager.core.AsynchronousOrderCallback;
+import org.fogbowcloud.manager.core.ManagerTestHelper;
 import org.fogbowcloud.manager.core.util.DefaultDataTestHelper;
-import org.fogbowcloud.manager.core.util.ManagerTestHelper;
 import org.fogbowcloud.manager.occi.model.Category;
 import org.fogbowcloud.manager.occi.model.Token;
 import org.fogbowcloud.manager.occi.order.Order;
@@ -69,8 +69,7 @@ public class TestOrderRemoteInstance {
 					
 					@Override
 					public void error(Throwable t) {
-						// TODO Auto-generated method stub
-						
+						// TODO Auto-generated method stub						
 					}
 				});
 		String instanceId = bq.poll(5, TimeUnit.SECONDS);
@@ -85,7 +84,7 @@ public class TestOrderRemoteInstance {
 		attributes.put("key2", "value2");
 		attributes.put(OrderAttribute.RESOURCE_KIND.getValue(), OrderConstants.COMPUTE_TERM);
 		Order order = new Order("id", new Token("anyvalue",
-				OCCITestHelper.USER_MOCK,
+				new Token.User(OCCITestHelper.USER_MOCK, OCCITestHelper.USER_MOCK),
 				DefaultDataTestHelper.TOKEN_FUTURE_EXPIRATION,
 				new HashMap<String, String>()), categories, attributes, true, DefaultDataTestHelper.LOCAL_MANAGER_COMPONENT_URL);
 		order.setInstanceId(INSTANCE_DEFAULT);

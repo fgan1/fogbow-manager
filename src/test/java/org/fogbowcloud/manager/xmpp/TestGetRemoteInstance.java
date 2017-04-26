@@ -5,8 +5,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.fogbowcloud.manager.core.ManagerTestHelper;
 import org.fogbowcloud.manager.core.util.DefaultDataTestHelper;
-import org.fogbowcloud.manager.core.util.ManagerTestHelper;
+import org.fogbowcloud.manager.occi.TestDataStorageHelper;
 import org.fogbowcloud.manager.occi.instance.Instance;
 import org.fogbowcloud.manager.occi.instance.Instance.Link;
 import org.fogbowcloud.manager.occi.instance.InstanceState;
@@ -42,6 +43,7 @@ public class TestGetRemoteInstance {
 	@After
 	public void tearDown() throws Exception {
 		this.managerTestHelper.shutdown();
+		TestDataStorageHelper.removeDefaultFolderDataStore();
 	}
 
 	private Instance createInstance() {
@@ -77,7 +79,7 @@ public class TestGetRemoteInstance {
 						Mockito.any(Token.class),
 						Mockito.eq(DefaultDataTestHelper.INSTANCE_ID))).thenReturn(instance);
 
-		Token token = new Token("anyvalue", OCCITestHelper.USER_MOCK,
+		Token token = new Token("anyvalue", new Token.User(OCCITestHelper.USER_MOCK, ""),
 				DefaultDataTestHelper.TOKEN_FUTURE_EXPIRATION, new HashMap<String, String>());
 		HashMap<String, String> xOCCIAtt = new HashMap<String, String>();
 		xOCCIAtt.put(OrderAttribute.RESOURCE_KIND.getValue(), OrderConstants.COMPUTE_TERM);
@@ -103,7 +105,7 @@ public class TestGetRemoteInstance {
 	
 	@Test(expected=OCCIException.class)
 	public void testGetRemoteInstaceNotFound() throws Exception {
-		Order order = new Order("anyvalue", new Token(WRONG_TOKEN, OCCITestHelper.USER_MOCK,
+		Order order = new Order("anyvalue", new Token(WRONG_TOKEN, new Token.User(OCCITestHelper.USER_MOCK, ""),
 				DefaultDataTestHelper.TOKEN_FUTURE_EXPIRATION, new HashMap<String, String>()), null, null, true, "");
 		order.setInstanceId(DefaultDataTestHelper.INSTANCE_ID);
 		order.setProvidingMemberId(DefaultDataTestHelper.LOCAL_MANAGER_COMPONENT_URL);
@@ -119,7 +121,7 @@ public class TestGetRemoteInstance {
 
 	@Test(expected = OCCIException.class)
 	public void testGetRemoteInstanceUnauthorized() throws Exception {
-		Token token = new Token(WRONG_TOKEN, OCCITestHelper.USER_MOCK,
+		Token token = new Token(WRONG_TOKEN, new Token.User(OCCITestHelper.USER_MOCK, ""),
 				DefaultDataTestHelper.TOKEN_FUTURE_EXPIRATION, new HashMap<String, String>());
 		Order order = new Order("anyvalue", token, null, null, true, "");
 		order.setInstanceId(INSTANCE_OTHER_USER);

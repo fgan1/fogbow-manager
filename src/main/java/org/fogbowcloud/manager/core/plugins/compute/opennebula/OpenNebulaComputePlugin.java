@@ -43,9 +43,6 @@ import org.fogbowcloud.manager.occi.model.Token;
 import org.fogbowcloud.manager.occi.order.OrderAttribute;
 import org.fogbowcloud.manager.occi.order.OrderConstants;
 import org.fogbowcloud.manager.occi.storage.StorageAttribute;
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
 import org.opennebula.client.Client;
 import org.opennebula.client.OneResponse;
 import org.opennebula.client.group.Group;
@@ -352,10 +349,6 @@ public class OpenNebulaComputePlugin implements ComputePlugin {
 		attributes.put("occi.compute.hostname", vm.getName());
 		attributes.put("occi.core.id", vm.getId());
 		attributes.put(Instance.LOCAL_IP_ADDRESS_ATT, privateIp);
-		
-		//SSH_PUBLIC_ADDRESS_ATT - If Reverse tunnel is used, this value will be replaced by Tunnel address.
-		String publicAddress = privateIp+":"+Instance.DEFAULT_SSH_PORT;
-		attributes.put(Instance.SSH_PUBLIC_ADDRESS_ATT, publicAddress);
 
 		List<Resource> resources = new ArrayList<Resource>();
 		resources.add(ResourceRepository.getInstance().get("compute"));
@@ -446,7 +439,7 @@ public class OpenNebulaComputePlugin implements ComputePlugin {
 	@Override
 	public ResourcesInfo getResourcesInfo(Token token) {
 		Client oneClient = clientFactory.createClient(token.getAccessId(), openNebulaEndpoint);				
-		User user = clientFactory.createUser(oneClient, token.getUser());
+		User user = clientFactory.createUser(oneClient, token.getUser().getName());
 		
 		String maxUserCpuStr = user.xpath("VM_QUOTA/VM/CPU");
 		String cpuUserInUseStr = user.xpath("VM_QUOTA/VM/CPU_USED");

@@ -6,7 +6,6 @@ import java.io.IOException;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Calendar;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
@@ -18,7 +17,6 @@ import java.util.Properties;
 import java.util.StringTokenizer;
 import java.util.TimerTask;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -58,8 +56,9 @@ import org.fogbowcloud.manager.core.plugins.PrioritizationPlugin;
 import org.fogbowcloud.manager.core.plugins.StoragePlugin;
 import org.fogbowcloud.manager.core.plugins.accounting.AccountingInfo;
 import org.fogbowcloud.manager.core.plugins.localcredentails.MapperHelper;
+import org.fogbowcloud.manager.core.plugins.localcredentails.SingleMapperPlugin;
 import org.fogbowcloud.manager.core.plugins.util.SshClientPool;
-import org.fogbowcloud.manager.occi.ManagerDataStore;
+import org.fogbowcloud.manager.occi.ManagerDataStoreController;
 import org.fogbowcloud.manager.occi.instance.Instance;
 import org.fogbowcloud.manager.occi.instance.InstanceState;
 import org.fogbowcloud.manager.occi.member.UsageServerResource.ResourceUsage;
@@ -73,12 +72,10 @@ import org.fogbowcloud.manager.occi.model.Token;
 import org.fogbowcloud.manager.occi.order.Order;
 import org.fogbowcloud.manager.occi.order.OrderAttribute;
 import org.fogbowcloud.manager.occi.order.OrderConstants;
-import org.fogbowcloud.manager.occi.order.OrderRepository;
 import org.fogbowcloud.manager.occi.order.OrderState;
 import org.fogbowcloud.manager.occi.order.OrderType;
 import org.fogbowcloud.manager.occi.storage.StorageAttribute;
-import org.fogbowcloud.manager.occi.storage.StorageLinkRepository;
-import org.fogbowcloud.manager.occi.storage.StorageLinkRepository.StorageLink;
+import org.fogbowcloud.manager.occi.storage.StorageLink;
 import org.fogbowcloud.manager.xmpp.AsyncPacketSender;
 import org.fogbowcloud.manager.xmpp.ManagerPacketHelper;
 import org.json.JSONException;
@@ -92,44 +89,27 @@ public class ManagerController {
 
 	public static final String DEFAULT_COMMON_SSH_USER = "fogbow";
 
-	private static final Logger LOGGER = Logger.getLogger(ManagerController.class);
-
 	private static final int DEFAULT_MAX_WHOISALIVE_MANAGER_COUNT = 100;
-	private static final long DEFAULT_BD_UPDATE_PERIOD = 300000; // 5 minute
 	private static final long DEFAULT_SCHEDULER_PERIOD = 30000; // 30 seconds
-	protected static final int DEFAULT_ASYNC_ORDER_WAITING_INTERVAL = 300000; // 5
-																				// minutes
-	private static final long DEFAULT_INSTANCE_MONITORING_PERIOD = 120000; // 2
-																			// minutes
-	private static final long DEFAULT_SERVED_ORDER_MONITORING_PERIOD = 120000; // 2
-																					// minutes
-	private static final long DEFAULT_GARBAGE_COLLECTOR_PERIOD = 240000; // 4
-																			// minutes
-	private static final long DEFAULT_INSTANCE_IP_MONITORING_PERIOD = 10000; // 10
-																				// seconds
+	protected static final int DEFAULT_ASYNC_ORDER_WAITING_INTERVAL = 300000; // 5 minutes
+	private static final long DEFAULT_INSTANCE_IP_MONITORING_PERIOD = 10000; // 10 seconds
 	private static final int DEFAULT_MAX_IP_MONITORING_TRIES = 90; // 30 tries
-	private static final long DEFAULT_ACCOUNTING_UPDATE_PERIOD = 300000; // 5
-																			// minutes
-	
+	private static final long DEFAULT_ACCOUNTING_UPDATE_PERIOD = 300000; // 5 minutes
 	protected static final int DEFAULT_CHECK_STILL_ALIVE_WAIT_TIME = 1000; // 1 second
 	private static final int DEFAULT_CHECK_STILL_ALIVE_TIMES = 5; // 5 times
-	
 	private static final long DEFAULT_CAPACITY_CONTROLLER_UPDATE_PERIOD = 600000; // 10 minutes
-	
 	public static final int DEFAULT_MAX_POOL = 200;
-
+	
 	private final ManagerTimer orderSchedulerTimer;
 	private final ManagerTimer instanceMonitoringTimer;
 	private final ManagerTimer servedOrderMonitoringTimer;
-	private final ManagerTimer garbageCollectorTimer;
 	private final ManagerTimer accountingUpdaterTimer;
-	private final ManagerTimer orderDBUpdaterTimer;
 	private final ManagerTimer capacityControllerUpdaterTimer;
 
+	private boolean forTest = false;
 	private Map<String, Token> instanceIdToToken = new HashMap<String, Token>();
 	private final List<FederationMember> members = Collections.synchronizedList(new LinkedList<FederationMember>());
-	private OrderRepository orderRepository = new OrderRepository();
-	private StorageLinkRepository storageLinkRepository = new StorageLinkRepository();
+	private ManagerDataStoreController managerDataStoreController;
 	private FederationMemberPickerPlugin memberPickerPlugin;
 	private List<Flavor> flavorsProvided;
 	private BenchmarkingPlugin benchmarkingPlugin;
@@ -151,50 +131,46 @@ public class ManagerController {
 	private ExecutorService benchmarkExecutor = Executors.newCachedThreadPool();
 	private SshClientPool sshClientPool = new SshClientPool();
 	private FailedBatch failedBatch = new FailedBatch();
-
-	private Map<String, ForwardedOrder> asynchronousOrders = new ConcurrentHashMap<String, ForwardedOrder>();
-
+	private ManagerControllerHelper.MonitoringHelper monitoringHelper;
+	
 	private DateUtils dateUtils = new DateUtils();
 
 	private PoolingHttpClientConnectionManager cm;
-
-	private ManagerDataStore managerDatabase;
+	
+	private static final Logger LOGGER = Logger.getLogger(ManagerController.class);
 	
 	private boolean isBasicMode;
-
+	
 	public ManagerController(Properties properties) {
 		this(properties, null);
 	}
-
+	
 	public ManagerController(Properties properties, ScheduledExecutorService executor) {
 		if (properties == null) {
 			throw new IllegalArgumentException();
 		}
 		this.properties = properties;
+		this.monitoringHelper = new ManagerControllerHelper().new MonitoringHelper(this.properties);
 		setFlavorsProvided(ResourceRepository.getStaticFlavors(properties));
 		if (executor == null) {
 			this.orderSchedulerTimer = new ManagerTimer(Executors.newScheduledThreadPool(1));
 			this.instanceMonitoringTimer = new ManagerTimer(Executors.newScheduledThreadPool(1));
 			this.servedOrderMonitoringTimer = new ManagerTimer(Executors.newScheduledThreadPool(1));
-			this.garbageCollectorTimer = new ManagerTimer(Executors.newScheduledThreadPool(1));
 			this.accountingUpdaterTimer = new ManagerTimer(Executors.newScheduledThreadPool(1));
-			this.orderDBUpdaterTimer = new ManagerTimer(Executors.newScheduledThreadPool(1));
 			this.capacityControllerUpdaterTimer = new ManagerTimer(Executors.newScheduledThreadPool(1)); 
 		} else {
 			this.orderSchedulerTimer = new ManagerTimer(executor);
 			this.instanceMonitoringTimer = new ManagerTimer(executor);
 			this.servedOrderMonitoringTimer = new ManagerTimer(executor);
-			this.garbageCollectorTimer = new ManagerTimer(executor);
 			this.accountingUpdaterTimer = new ManagerTimer(executor);
-			this.orderDBUpdaterTimer = new ManagerTimer(executor);
 			this.capacityControllerUpdaterTimer = new ManagerTimer(executor);
 		}
 		
 		isBasicMode = new Boolean(properties.getProperty(ConfigurationConstants.BASIC_MODE));
 		
-		managerDatabase = new ManagerDataStore(properties);
+		this.managerDataStoreController = new ManagerDataStoreController(properties);
+		
 		recoverPreviousOrders();
-		triggerOrderDBUpdater();
 	}
 
 	public MapperPlugin getMapperPlugin() {
@@ -205,10 +181,6 @@ public class ManagerController {
 		return localIdentityPlugin;
 	}
 	
-	protected void setDatabase(ManagerDataStore database) {
-		this.managerDatabase = database;
-	}
-
 	public void setBenchmarkExecutor(ExecutorService benchmarkExecutor) {
 		this.benchmarkExecutor = benchmarkExecutor;
 	}
@@ -236,11 +208,15 @@ public class ManagerController {
 	public void setNetworkPlugin(NetworkPlugin networkPlugin) {
 		this.networkPlugin = networkPlugin;
 	}
+	
+	public void setForTest(boolean forTest) {
+		this.forTest = forTest;
+	}
 
 	public void setComputeAccountingPlugin(AccountingPlugin computeAccountingPlugin) {
 		this.computeAccountingPlugin = computeAccountingPlugin;
 		// accounging updater may starting only after set accounting plugin
-		if (this.computeAccountingPlugin != null && !accountingUpdaterTimer.isScheduled()) {
+		if (!accountingUpdaterTimer.isScheduled()) {
 			triggerAccountingUpdater();
 		}
 	}
@@ -248,7 +224,7 @@ public class ManagerController {
 	public void setStorageAccountingPlugin(AccountingPlugin storageAccountingPlugin) {
 		this.storageAccountingPlugin = storageAccountingPlugin;
 		
-		if (this.storageAccountingPlugin != null && !accountingUpdaterTimer.isScheduled()) {
+		if (!accountingUpdaterTimer.isScheduled()) {
 			triggerAccountingUpdater();
 		}		
 	}
@@ -273,9 +249,9 @@ public class ManagerController {
 
 	protected void initializeStorageLinks() throws SQLException, JSONException {
 		LOGGER.debug("Recovering previous storage link.");
-		
-		for (StorageLink storageLink : new ArrayList<StorageLink>(managerDatabase.getStorageLinks())) {
-			storageLinkRepository.addStorageLink(storageLink.getFederationToken().getUser(), storageLink);
+		for (StorageLink storageLink : 
+					new ArrayList<StorageLink>(this.managerDataStoreController.getAllStorageLinks())) {
+			this.managerDataStoreController.addStorageLink(storageLink);
 			LOGGER.debug("Storage link (" + storageLink.getId() + ") was recovered.");
 		}
 		LOGGER.debug("Previous storage link recovered.");
@@ -283,13 +259,13 @@ public class ManagerController {
 
 	private void initializeOrders() throws SQLException, JSONException {
 		LOGGER.debug("Recovering previous orders.");
-		for (Order order : this.managerDatabase.getOrders()) {
+		for (Order order : this.managerDataStoreController.getAllOrders()) {
 			try {
 				Instance instance = null;
 				if (order.getState().equals(OrderState.FULFILLED)
 						|| order.getState().equals(OrderState.DELETED)) {
 					instance = getInstance(order, order.getResourceKing());
-					LOGGER.debug(instance.getId() + " was recovered to request " + order.getId());
+					LOGGER.debug(instance.getId() + " was recovered to order " + order.getId());
 				}
 			} catch (OCCIException e) {
 				LOGGER.debug(order.getGlobalInstanceId() + " does not exist anymore.", e);
@@ -298,9 +274,9 @@ public class ManagerController {
 					continue;
 				}
 			}
-			orderRepository.addOrder(order.getFederationToken().getUser(), order);
+			managerDataStoreController.addOrder(order);
 		}
-		if (!orderSchedulerTimer.isScheduled() && orderRepository.getOrdersIn(OrderState.OPEN).size() > 0) {
+		if (!orderSchedulerTimer.isScheduled() && managerDataStoreController.getOrdersIn(OrderState.OPEN).size() > 0) {
 			triggerOrderScheduler();
 		}
 		LOGGER.debug("Previous orders recovered.");
@@ -312,25 +288,25 @@ public class ManagerController {
 	}
 
 	private void triggerAccountingUpdater() {
+		if (this.forTest) { return; }
 		
 		if (!isBasicMode) {
+		
+		String accountingUpdaterPeriodStr = properties.getProperty(ConfigurationConstants.ACCOUNTING_UPDATE_PERIOD_KEY);
+		final long accountingUpdaterPeriod = accountingUpdaterPeriodStr == null ? DEFAULT_ACCOUNTING_UPDATE_PERIOD
+				: Long.valueOf(accountingUpdaterPeriodStr);
 
-			String accountingUpdaterPeriodStr = properties
-					.getProperty(ConfigurationConstants.ACCOUNTING_UPDATE_PERIOD_KEY);
-			final long accountingUpdaterPeriod = accountingUpdaterPeriodStr == null ? DEFAULT_ACCOUNTING_UPDATE_PERIOD
-					: Long.valueOf(accountingUpdaterPeriodStr);
-
-			accountingUpdaterTimer.scheduleAtFixedRate(new TimerTask() {
-				@Override
-				public void run() {
-					try {
-						updateAccounting();
-					} catch (Throwable e) {
-						LOGGER.warn("Error while updating accounting", e);
-					}
+		accountingUpdaterTimer.scheduleAtFixedRate(new TimerTask() {
+			@Override
+			public void run() {
+				try {
+					updateAccounting();					
+				} catch (Throwable e) {
+					LOGGER.warn("Error while updating accounting", e);
 				}
-			}, 0, accountingUpdaterPeriod);
-
+			}
+		}, 0, accountingUpdaterPeriod);
+		
 		}
 	}
 
@@ -348,67 +324,94 @@ public class ManagerController {
 	}
 
 	private void updateStorageAccounting() {
-		
+	
 		if(!isBasicMode){
-			
-			List<Order> ordersStorageWithInstances = new ArrayList<Order>(
-					orderRepository.getOrdersIn(OrderConstants.STORAGE_TERM, OrderState.FULFILLED, OrderState.DELETED));
-			List<String> orderStorageIds = new LinkedList<String>();
-			for (Order order : ordersStorageWithInstances) {
-				orderStorageIds.add(order.getId());
-			}
-			LOGGER.debug("Usage accounting is about to be updated. The following storage orders do have instances:"
-					+ orderStorageIds);
-			storageAccountingPlugin.update(ordersStorageWithInstances);
+	
+		List<Order> ordersStorageWithInstances = new ArrayList<Order>(
+				managerDataStoreController.getOrdersIn(OrderConstants.STORAGE_TERM,
+				OrderState.FULFILLED, OrderState.DELETED));
+		List<String> orderStorageIds = new LinkedList<String>();
+		for (Order order: ordersStorageWithInstances) {
+			orderStorageIds.add(order.getId());
+		}
+		LOGGER.debug("Usage accounting is about to be updated. The following storage orders do have instances:"
+				+ orderStorageIds);
+		storageAccountingPlugin.update(ordersStorageWithInstances);
 		
 		}
 	}
 
 	private void updateComputeAccounting() {
+	
 		if(!isBasicMode){
-			List<Order> ordersComputeWithInstances = new ArrayList<Order>(
-					orderRepository.getOrdersIn(OrderConstants.COMPUTE_TERM,
-							OrderState.FULFILLED, OrderState.DELETED));
-			List<String> orderComputeIds = new LinkedList<String>();
-			for (Order order: ordersComputeWithInstances) {
-				orderComputeIds.add(order.getId());
-			}
-			LOGGER.debug("Usage accounting is about to be updated. The following compute orders do have instances: "
-					+ orderComputeIds);
-			computeAccountingPlugin.update(ordersComputeWithInstances);
+	
+		List<Order> ordersComputeWithInstances = new ArrayList<Order>(
+				managerDataStoreController.getOrdersIn(OrderConstants.COMPUTE_TERM,
+				OrderState.FULFILLED, OrderState.DELETED));
+		List<String> orderComputeIds = new LinkedList<String>();
+		for (Order order: ordersComputeWithInstances) {
+			orderComputeIds.add(order.getId());
+		}
+		LOGGER.debug("Usage accounting is about to be updated. The following compute orders do have instances: "
+				+ orderComputeIds);
+		computeAccountingPlugin.update(ordersComputeWithInstances);
+		
 		}
 	}
 	
 	private void triggerCapacityControllerUpdater() {
+		if (this.forTest) { return; }
 		
 		if(!isBasicMode){
+		
+		String capacityControllerUpdaterPeriodStr = properties.getProperty(ConfigurationConstants.CAPACITY_CONTROLLER_UPDATE_PERIOD_KEY);
+		final long capacityControllerUpdaterPeriod = capacityControllerUpdaterPeriodStr == null ? DEFAULT_CAPACITY_CONTROLLER_UPDATE_PERIOD
+				: Long.valueOf(capacityControllerUpdaterPeriodStr);
 
-			String capacityControllerUpdaterPeriodStr = properties.getProperty(ConfigurationConstants.CAPACITY_CONTROLLER_UPDATE_PERIOD_KEY);
-			final long capacityControllerUpdaterPeriod = capacityControllerUpdaterPeriodStr == null ? DEFAULT_CAPACITY_CONTROLLER_UPDATE_PERIOD
-					: Long.valueOf(capacityControllerUpdaterPeriodStr);
-
-			capacityControllerUpdaterTimer.scheduleAtFixedRate(new TimerTask() {
-				@Override
-				public void run() {
-					try {
-						updateVirtualQuotas();					
-					} catch (Throwable e) {
-						LOGGER.error("Erro while updating accounting", e);
-					}
+		capacityControllerUpdaterTimer.scheduleAtFixedRate(new TimerTask() {
+			@Override
+			public void run() {
+				try {
+					updateVirtualQuotas();					
+				} catch (Throwable e) {
+					LOGGER.error("Erro while updating virtual quotas.", e);
 				}
-			}, 0, capacityControllerUpdaterPeriod);
-
+			}
+		}, 0, capacityControllerUpdaterPeriod);
+		
 		}
 	}
 	
 	private void updateVirtualQuotas() {
-		
 		LOGGER.debug("Updating virtual quotas (capacity controller plugin).");
-		for(FederationMember member : members){
-			if(!(member.getId().equals(properties.getProperty(ConfigurationConstants.XMPP_JID_KEY)))){
-				capacityControllerPlugin.updateCapacity(member);
-				LOGGER.debug("Member: " +member.getId() + "Quota: "+capacityControllerPlugin.getMaxCapacityToSupply(member));
+		for(FederationMember member : new ArrayList<FederationMember>(this.members)) {
+			if(!(member.getId().equals(properties.getProperty(ConfigurationConstants.XMPP_JID_KEY)))){				
+				int maxCapacity = getMaxCapacityDefaultUser();				
+				this.capacityControllerPlugin.updateCapacity(member, maxCapacity);
+				LOGGER.debug("Member: " + member.getId() + "Quota: "
+						+ this.capacityControllerPlugin.getMaxCapacityToSupply(member));
 			}
+		}
+	}
+
+	protected int getMaxCapacityDefaultUser() {
+		try {
+			SingleMapperPlugin singleMapperPlugin = new SingleMapperPlugin(this.properties);
+			Order emptyOrder = null;
+			Map<String, String> defaultUserLocalCredentials = singleMapperPlugin
+					.getLocalCredentials(emptyOrder);
+			// Get default user's token
+			Token token = this.localIdentityPlugin.createToken(
+					defaultUserLocalCredentials);
+			
+			ResourcesInfo resourcesInfo = this.computePlugin.getResourcesInfo(token);
+			int maxCapacity = Integer.valueOf(resourcesInfo.getInstancesInUse()) 
+					+ Integer.valueOf(resourcesInfo.getInstancesIdle());
+			
+			return maxCapacity;			
+		} catch (Exception e) {
+			LOGGER.warn("Could not possible get maximum capacity.", e);
+			return CapacityControllerPlugin.MAXIMUM_CAPACITY_VALUE_ERROR;
 		}
 	}
 
@@ -422,10 +425,6 @@ public class ManagerController {
 
 	public void setComputePlugin(ComputePlugin computePlugin) {
 		this.computePlugin = computePlugin;
-		// garbage collector may starting only after set compute plugin
-		if (!garbageCollectorTimer.isScheduled()) {
-			triggerGarbageCollector();
-		}
 	}
 
 	public void setLocalIdentityPlugin(IdentityPlugin identityPlugin) {
@@ -439,44 +438,8 @@ public class ManagerController {
 	public void setCapacityControllerPlugin(CapacityControllerPlugin capacityControllerPlugin) {
 		this.capacityControllerPlugin = capacityControllerPlugin;
 		// capacity controller updater should start only after setting capacity controller plugin
-		if (this.capacityControllerPlugin != null && !capacityControllerUpdaterTimer.isScheduled()) {
+		if (!capacityControllerUpdaterTimer.isScheduled()) {
 			triggerCapacityControllerUpdater();
-		}
-	}
-
-	private void triggerGarbageCollector() {
-		String garbageCollectorPeriodStr = properties.getProperty(ConfigurationConstants.GARBAGE_COLLECTOR_PERIOD_KEY);
-		final long garbageCollectorPeriod = garbageCollectorPeriodStr == null ? DEFAULT_GARBAGE_COLLECTOR_PERIOD
-				: Long.valueOf(garbageCollectorPeriodStr);
-
-		garbageCollectorTimer.scheduleAtFixedRate(new TimerTask() {
-			@Override
-			public void run() {	
-				try {
-					garbageCollector();					
-				} catch (Throwable e) {
-					LOGGER.error("Error while executing garbage collector", e);
-				}
-			}
-		}, 0, garbageCollectorPeriod);
-	}
-
-	protected void garbageCollector() {
-		LOGGER.debug("Garbage collector...");
-		if (computePlugin != null) {
-			List<Instance> federationInstances = getAllFogbowFederationInstances();
-			LOGGER.debug("Number of federation instances = " + federationInstances.size());
-			for (Instance instance : federationInstances) {
-				LOGGER.debug("federation instance=" + instance.getId());
-				Order order = orderRepository.getOrderByInstance(instance.getId());
-				LOGGER.debug("Order for instance " + instance.getId() + " is " + order);
-				if ((!instanceHasOrderRelatedTo(null, generateGlobalId(instance.getId(), null)) && order != null
-						&& !order.isLocal()) || order == null) {
-					// this is an orphan instance
-					LOGGER.debug("Removing the orphan instance " + instance.getId());
-					this.computePlugin.removeInstance(getTokenPerInstance(instance.getId()), instance.getId());
-				}
-			}
 		}
 	}
 
@@ -511,7 +474,7 @@ public class ManagerController {
 		LOGGER.debug("Checking if instance " + instanceId + " is related to order " + orderId);
 		// checking federation local user instances for local users
 		if (orderId == null) {
-			for (Order order : orderRepository.getAllOrders()) {
+			for (Order order : managerDataStoreController.getAllOrders()) {
 				if (order.getState().in(OrderState.FULFILLED, OrderState.DELETED, OrderState.SPAWNING)) {
 					String reqInstanceId = generateGlobalId(order.getInstanceId(), order.getProvidingMemberId());
 					if (reqInstanceId != null && reqInstanceId.equals(instanceId)) {
@@ -522,7 +485,7 @@ public class ManagerController {
 			}
 		} else {
 			// checking federation local users instances for remote members
-			Order order = orderRepository.get(orderId);
+			Order order = managerDataStoreController.getOrder(orderId);
 			LOGGER.debug("The order with id " + orderId + " is " + order);
 			if (order == null) {
 				return false;
@@ -531,10 +494,9 @@ public class ManagerController {
 				return true;
 			}
 
-			// it is possible that the asynchronous order has not received
-			// instanceId yet
+			// it is possible that the asynchronous order has not received instanceId yet
 			if ((order.getState().in(OrderState.OPEN) || order.getState().in(OrderState.PENDING)) 
-						&& asynchronousOrders.containsKey(orderId)) {
+						&& managerDataStoreController.isOrderSyncronous(orderId)) {
 				LOGGER.debug("The instance " + instanceId + " is related to order " + order.getId());
 				return true;
 			} else if (order.getState().in(OrderState.FULFILLED, OrderState.DELETED, OrderState.SPAWNING)) {
@@ -586,14 +548,11 @@ public class ManagerController {
 			if (federationMemberId.equals(properties
 					.getProperty(ConfigurationConstants.XMPP_JID_KEY))) {
 				return new FederationMember(getResourcesInfo(
-						this.getLocalCredentials(accessId), token.getUser(), true));
+						this.getLocalCredentials(accessId), token.getUser().getId(), true));
 			}
-			if(!isBasicMode){
-				return new FederationMember(ManagerPacketHelper.getRemoteUserQuota
-						(token, federationMemberId, packetSender));
-			}else{
-				return null;
-			}
+			
+			return new FederationMember(ManagerPacketHelper.getRemoteUserQuota
+					(token, federationMemberId, packetSender));
 		} catch (Exception e) {
 			LOGGER.error("Error while trying to get member [" + accessId + "] quota from ["
 					+ federationMemberId + "]", e);
@@ -605,11 +564,11 @@ public class ManagerController {
 		return mapperPlugin.getLocalCredentials(accessId);
 	}
 
-	public ResourcesInfo getResourcesInfo(String user, boolean isLocal) {
-		return getResourcesInfo(null, user, isLocal);
+	public ResourcesInfo getResourcesInfo(String userId, boolean isLocal) {
+		return getResourcesInfo(null, userId, isLocal);
 	}
 
-	public ResourcesInfo getResourcesInfo(Map<String, String> localCredentials, String user, boolean isLocal) {
+	public ResourcesInfo getResourcesInfo(Map<String, String> localCredentials, String userId, boolean isLocal) {
 		ResourcesInfo totalResourcesInfo = new ResourcesInfo();
 		totalResourcesInfo.setId(properties.getProperty(ConfigurationConstants.XMPP_JID_KEY));
 
@@ -618,10 +577,10 @@ public class ManagerController {
 			totalResourcesInfo.addResource(computePlugin.getResourcesInfo(localToken));
 			
 			try {
-				totalResourcesInfo.addResource(getResourceInfoInUseByUser(localToken, user, isLocal));			
+				totalResourcesInfo.addResource(getResourceInfoInUseByUserId(localToken, userId, isLocal));			
 			} catch (Exception e) {
 				LOGGER.warn("Did not possible get informations about instances, CPUs and "
-						+ "memories in use by user(" + user + ").");
+						+ "memories in use by user id (" + userId + ").");
 			}
 		} else {
 			Map<String, Map<String, String>> allLocalCredentials = this.mapperPlugin.getAllLocalCredentials();
@@ -644,10 +603,10 @@ public class ManagerController {
 				totalResourcesInfo.addResource(resourcesInfo);
 
 				try {
-					totalResourcesInfo.addResource(getResourceInfoInUseByUser(localToken, user, isLocal));			
+					totalResourcesInfo.addResource(getResourceInfoInUseByUserId(localToken, userId, isLocal));			
 				} catch (Exception e) {
 					LOGGER.warn("Did not possible get informations about instances, CPUs and "
-							+ "memories in use by user(" + user + ").");
+							+ "memories in use by user id (" + userId + ").");
 				}				
 			}			
 		}
@@ -656,8 +615,8 @@ public class ManagerController {
 		return totalResourcesInfo;
 	}
 	
-	protected ResourcesInfo getResourceInfoInUseByUser(Token localToken, String user, boolean isLocal) {
-		List<Order> localOrders = orderRepository.getByUser(user, isLocal);
+	protected ResourcesInfo getResourceInfoInUseByUserId(Token localToken, String userId, boolean isLocal) {
+		List<Order> localOrders = managerDataStoreController.getOrdersByUserId(userId, isLocal);
 		int contInstance = 0;
 		double contCpu = 0;
 		double contMem = 0;
@@ -686,20 +645,20 @@ public class ManagerController {
 		return new ResourcesInfo(String.valueOf(contCpu), String.valueOf(contMem), String.valueOf(contInstance));
 	}
 	
-	public String getUser(String accessId) {
+	public String getUserId(String accessId) {
 		Token token = getTokenFromFederationIdP(accessId);
 		if (token == null) {
 			return null;
 		}
-		return token.getUser();
+		return token.getUser().getId();
 	}
 
 	public List<StorageLink> getStorageLinkFromUser(String accessId) {
-		String user = getUser(accessId);
+		String userId = getUserId(accessId);
 		if (!federationIdentityPlugin.isValid(accessId)) {
 			throw new OCCIException(ErrorType.UNAUTHORIZED, ResponseConstants.UNAUTHORIZED);
 		}
-		return storageLinkRepository.getByUser(user);
+		return this.managerDataStoreController.getStorageLinksByUser(userId);
 	}
 	
 	public List<Order> getOrdersFromUser(String federationAccessToken) {
@@ -707,14 +666,14 @@ public class ManagerController {
 	}
 	
 	public List<Order> getOrdersFromUser(String federationAccessToken, boolean findLocalOrder) {
-		String user = getUser(federationAccessToken);
-		return orderRepository.getByUser(user, findLocalOrder);
+		String userId = getUserId(federationAccessToken);
+		return managerDataStoreController.getOrdersByUserId(userId, findLocalOrder);
 	}
 
 	public void removeAllOrders(String accessId) {
-		String user = getUser(accessId);
-		LOGGER.debug("Removing all orders of user: " + user);
-		orderRepository.removeByUser(user);
+		String userId = getUserId(accessId);
+		LOGGER.debug("Removing all orders of user id: " + userId);
+		managerDataStoreController.removeOrderByUserId(userId);
 		if (!instanceMonitoringTimer.isScheduled()) {
 			triggerInstancesMonitor();
 		}
@@ -723,14 +682,14 @@ public class ManagerController {
 	public void removeOrder(String accessId, String orderId) {
 		LOGGER.debug("Removing orderId: " + orderId);
 		checkOrderId(accessId, orderId);
-		Order order = orderRepository.get(orderId);
-		if (!isBasicMode && order != null 
+		Order order = managerDataStoreController.getOrder(orderId);
+		if (order != null 
 				&& order.getProvidingMemberId() != null 
 				&& (order.getState().equals(OrderState.OPEN) 
 						|| order.getState().equals(OrderState.PENDING))) {
 			removeAsynchronousRemoteOrders(order, true);
 		}
-		orderRepository.remove(orderId);
+		managerDataStoreController.removeOrder(orderId);
 		if (!instanceMonitoringTimer.isScheduled()) {
 			triggerInstancesMonitor();
 		}
@@ -738,7 +697,7 @@ public class ManagerController {
 	
 	public void removeOrderForRemoteMember(String accessId, String orderId) {
 		LOGGER.debug("Removing orderId for remote member: " + orderId);
-		Order order = orderRepository.get(orderId, false);
+		Order order = managerDataStoreController.getOrder(orderId, false);
 		if (order != null && order.getInstanceId() != null) {
 			try {
 				Token token = localIdentityPlugin.createToken(mapperPlugin.getLocalCredentials(accessId));
@@ -753,7 +712,7 @@ public class ManagerController {
 			} catch (Exception e) { 
 			}
 		}
-		orderRepository.exclude(order.getId());
+		managerDataStoreController.excludeOrder(order.getId());
 	}	
 
 	private void checkOrderId(String accessId, String orderId) {
@@ -761,9 +720,9 @@ public class ManagerController {
 	}
 	
 	private void checkOrderId(String accessId, String orderId, boolean lookingForLocalOrder) {
-		String user = getUser(accessId);
-		if (orderRepository.get(user, orderId, lookingForLocalOrder) == null) {
-			LOGGER.debug("User " + user + " does not have orderId " + orderId);
+		String userId = getUserId(accessId);
+		if (managerDataStoreController.getOrder(userId, orderId, lookingForLocalOrder) == null) {
+			LOGGER.debug("User id " + userId + " does not have orderId " + orderId);
 			throw new OCCIException(ErrorType.NOT_FOUND, ResponseConstants.NOT_FOUND);
 		}
 	}
@@ -772,7 +731,7 @@ public class ManagerController {
 		
 		LOGGER.debug("Retrieving instances(" + resourceKind + ") of token " + accessId);
 		List<Instance> instances = new ArrayList<Instance>();
-		for (Order order : orderRepository.getByUser(getUser(accessId))) {
+		for (Order order : managerDataStoreController.getOrdersByUserId(getUserId(accessId))) {
 			
 			if (!order.getResourceKing().equals(resourceKind)) {
 				continue;
@@ -822,7 +781,7 @@ public class ManagerController {
 		} else {
 			LOGGER.debug(order.getInstanceId() + " is remote, going out to " + order.getProvidingMemberId()
 					+ " to get its information.");
-			if(!isBasicMode){
+			if(!isBasicMode){		
 				instance = getRemoteInstance(order);
 			}
 		}
@@ -844,8 +803,7 @@ public class ManagerController {
 				
 				instance.addAttribute(Instance.SSH_USERNAME_ATT, getSSHCommonUser());
 				Map<String, String> serviceAddresses = getExternalServiceAddresses(order.getId());
-				
-				if (!isBasicMode && serviceAddresses != null ) {
+				if (!isBasicMode && serviceAddresses != null) {
 					instance.addAttribute(Instance.SSH_PUBLIC_ADDRESS_ATT, serviceAddresses.get(SSH_SERVICE_NAME));
 					serviceAddresses.remove(SSH_SERVICE_NAME);
 					instance.addAttribute(Instance.EXTRA_PORTS_ATT, new JSONObject(serviceAddresses).toString());
@@ -955,18 +913,18 @@ public class ManagerController {
 	public void removeInstances(String accessId, String resourceKind) {
 		resourceKind = resourceKind == null ? OrderConstants.COMPUTE_TERM : resourceKind;
 		
-		String user = getUser(accessId);
-		LOGGER.debug("Removing instances(" + resourceKind + ") of user: " + user);
-		for (Order order : orderRepository.getByUser(user)) {
+		String userId = getUserId(accessId);
+		LOGGER.debug("Removing instances(" + resourceKind + ") of user id: " + userId);
+		for (Order order : managerDataStoreController.getOrdersByUserId(userId)) {
 			String instanceId = order.getInstanceId();
 			if (instanceId == null) {
 				continue;
 			}
-			removeInstance(normalizeInstanceId(instanceId), order, resourceKind);
+			removeInstance(normalizeFogbowResourceId(instanceId), order, resourceKind);
 		}
 	}
 
-	public static String normalizeInstanceId(String instanceId) {
+	public static String normalizeFogbowResourceId(String instanceId) {
 		if (instanceId != null && instanceId.contains(Order.SEPARATOR_GLOBAL_ID)) {
 			String[] partsInstanceId = instanceId.split(Order.SEPARATOR_GLOBAL_ID);
 			instanceId = partsInstanceId[0];
@@ -980,16 +938,16 @@ public class ManagerController {
 	
 	public void removeInstance(String federationToken, String instanceId, String resourceKind) {
 		Order order = getOrderForInstance(federationToken, instanceId);
-		instanceId = normalizeInstanceId(instanceId);
+		instanceId = normalizeFogbowResourceId(instanceId);
 		removeInstance(instanceId, order, resourceKind);
 	}
 	
 	private void removeInstance(String instanceId, Order order, String resourceKind) {				
-		List<StorageLink> storageLinks = storageLinkRepository.getAllByInstance(instanceId, resourceKind);
+		List<StorageLink> storageLinks = this.managerDataStoreController.getAllStorageLinkByInstance(instanceId, resourceKind);
 		if (!storageLinks.isEmpty()) {
 			throw new OCCIException(ErrorType.BAD_REQUEST,
 					ResponseConstants.EXISTING_ATTACHMENT + " Attachment IDs : " 
-					+ StorageLinkRepository.Util.storageLinksToString(storageLinks));			
+					+ StorageLink.Util.storageLinksToString(storageLinks));			
 		}
 				
 		Token localToken = getFederationUserToken(order);
@@ -1001,7 +959,7 @@ public class ManagerController {
 			} else if (resourceKind.equals(OrderConstants.NETWORK_TERM)) {
 				this.networkPlugin.removeInstance(localToken, instanceId);
 			}
-		} else {		
+		} else {					
 			if(!isBasicMode){
 				removeRemoteInstance(order);
 			}
@@ -1020,7 +978,7 @@ public class ManagerController {
 	}
 
 	protected void instanceRemoved(Order order) {			
-		if ( !isBasicMode && order.getResourceKing().equals(OrderConstants.COMPUTE_TERM)) {
+		if (!isBasicMode && order.getResourceKing().equals(OrderConstants.COMPUTE_TERM)) {
 			updateAccounting();
 			benchmarkingPlugin.remove(order.getInstanceId());			
 		}
@@ -1030,7 +988,7 @@ public class ManagerController {
 		order.setProvidingMemberId(null);
 
 		if (order.getState().equals(OrderState.DELETED) || !order.isLocal()) {
-			orderRepository.exclude(order.getId());
+			managerDataStoreController.excludeOrder(order.getId());
 		} else if (isPersistent(order)) {
 			LOGGER.debug("Order: " + order + ", setting state to " + OrderState.OPEN);
 			order.setState(OrderState.OPEN);
@@ -1042,9 +1000,10 @@ public class ManagerController {
 			order.setState(OrderState.CLOSED);
 		}
 		
+		this.managerDataStoreController.updateOrder(order);
 		if (instanceId != null) {
-			storageLinkRepository.removeAllByInstance(
-					normalizeInstanceId(instanceId), order.getResourceKing());			
+			this.managerDataStoreController.removeAllStorageLinksByInstance(
+					normalizeFogbowResourceId(instanceId), order.getResourceKing());			
 		}
 	}
 
@@ -1073,14 +1032,13 @@ public class ManagerController {
 	}
 
 	public Order getOrderForInstance(String federationToken, String instanceId) {
-		String user = getUser(federationToken);
-		LOGGER.debug("Getting instance " + instanceId + " of user " + user);
-		List<Order> userOrders = orderRepository.getAllLocalOrders();
+		String userId = getUserId(federationToken);
+		LOGGER.debug("Getting instance " + instanceId + " of user id " + userId);
+		List<Order> userOrders = managerDataStoreController.getAllLocalOrders();
 
 		for (Order order : userOrders) {
-			if (instanceId
-					.equals(order.getInstanceId() + Order.SEPARATOR_GLOBAL_ID + order.getProvidingMemberId())) {
-				if (!order.getFederationToken().getUser().equals(user)) {
+			if (instanceId.equals(order.getInstanceId() + Order.SEPARATOR_GLOBAL_ID + order.getProvidingMemberId())) {
+				if (!order.getFederationToken().getUser().getId().equals(userId)) {
 					throw new OCCIException(ErrorType.UNAUTHORIZED, ResponseConstants.UNAUTHORIZED);
 				}
 				return order;
@@ -1092,7 +1050,7 @@ public class ManagerController {
 	public Order getOrder(String accessId, String orderId) {
 		LOGGER.debug("Getting orderId " + orderId);
 		checkOrderId(accessId, orderId);
-		return orderRepository.get(orderId);
+		return managerDataStoreController.getOrder(orderId);
 	}
 	
 	public StorageLink getStorageLink(String accessId, String storageLinkId) {
@@ -1100,7 +1058,7 @@ public class ManagerController {
 		if (!federationIdentityPlugin.isValid(accessId)) {
 			throw new OCCIException(ErrorType.UNAUTHORIZED, ResponseConstants.UNAUTHORIZED);
 		}
-		return storageLinkRepository.get(normalizeInstanceId(storageLinkId));
+		return this.managerDataStoreController.getStorageLink(normalizeFogbowResourceId(storageLinkId));
 	}
 
 	public FederationMember getFederationMember(String memberId) {
@@ -1130,7 +1088,7 @@ public class ManagerController {
 			return;
 		}
 		
-		orderRepository.addOrder(requestingUserToken.getUser(), order);
+		managerDataStoreController.addOrder(order);
 
 		if (!orderSchedulerTimer.isScheduled()) {
 			triggerOrderScheduler();
@@ -1141,15 +1099,17 @@ public class ManagerController {
 		if(isBasicMode){
 			return true;
 		}
+		
 		int instancesFulfilled = 0;
-		List<Order> allServedOrders = orderRepository.getAllServedOrders();
+		List<Order> allServedOrders = this.managerDataStoreController.getAllServedOrders();
 		for (Order order : allServedOrders) {
 			if (order.getRequestingMemberId().equals(requestingMemberId) && 
-					order.getState().equals(OrderState.FULFILLED)) 
+					order.getState().equals(OrderState.FULFILLED) && 
+					order.getResourceKing().equals(OrderConstants.COMPUTE_TERM)) 
 				instancesFulfilled++;
 		}
 		FederationMember requestingMember = null;
-		for(FederationMember member : members){
+		for(FederationMember member : new ArrayList<FederationMember>(this.members)) {
 			if(member.getId().equals(requestingMemberId)){
 				requestingMember = member;
 				break;
@@ -1157,8 +1117,8 @@ public class ManagerController {
 		}
 		
 		//TODO different instances sizes should be considered?
-				
-		return (instancesFulfilled+1)<=capacityControllerPlugin.getMaxCapacityToSupply(requestingMember);
+		//TODO remove this magic number
+		return (instancesFulfilled + 1) <= capacityControllerPlugin.getMaxCapacityToSupply(requestingMember);
 	}
 
 	protected String createUserDataUtilsCommand(Order order) throws IOException, MessagingException {
@@ -1250,25 +1210,23 @@ public class ManagerController {
 	}
 
 	private void triggerServedOrderMonitoring() {
+		if (this.forTest) { return; }
 		
 		if(!isBasicMode){
+		
+		final long servedOrderMonitoringPeriod = ManagerControllerHelper.getServerOrderMonitoringPeriod(this.properties);
 
-			String servedOrderMonitoringPeriodStr = properties
-					.getProperty(ConfigurationConstants.SERVED_ORDER_MONITORING_PERIOD_KEY);
-			final long servedOrderMonitoringPeriod = servedOrderMonitoringPeriodStr == null
-					? DEFAULT_SERVED_ORDER_MONITORING_PERIOD : Long.valueOf(servedOrderMonitoringPeriodStr);
-
-			servedOrderMonitoringTimer.scheduleAtFixedRate(new TimerTask() {
-				@Override
-				public void run() {	
-					try {
-						monitorServedOrders();
-					} catch (Throwable e) {
-						LOGGER.error("Error while monitoring served orders", e);
-					}
+		servedOrderMonitoringTimer.scheduleAtFixedRate(new TimerTask() {
+			@Override
+			public void run() {	
+				try {
+					monitorServedOrders();
+				} catch (Throwable e) {
+					LOGGER.error("Error while monitoring served orders", e);
 				}
-			}, 0, servedOrderMonitoringPeriod);
-
+			}
+		}, 0, servedOrderMonitoringPeriod);
+		
 		}
 	}
 
@@ -1294,7 +1252,7 @@ public class ManagerController {
 	public Instance getInstanceForRemoteMember(String instanceId) {
 		LOGGER.info("Getting instance " + instanceId + " for remote member.");
 		try {
-			Order servedOrder = orderRepository.getOrderByInstance(instanceId);
+			Order servedOrder = managerDataStoreController.getOrderByInstance(instanceId);
 			Token federationUserToken = getFederationUserToken(servedOrder);
 			String orderResourceKind = servedOrder != null ? servedOrder.getResourceKing(): null;
 			Instance instance = null;
@@ -1331,7 +1289,7 @@ public class ManagerController {
 	}
 	
 	public void removeInstanceForRemoteMember(String instanceId) {
-		Order order = orderRepository.getOrderByInstance(instanceId);
+		Order order = managerDataStoreController.getOrderByInstance(instanceId);
 		String resourceKind = order != null ? order.getAttValue(OrderAttribute.RESOURCE_KIND.getValue()) : null;
 		resourceKind = resourceKind == null ? OrderConstants.COMPUTE_TERM : resourceKind;
 		LOGGER.info("Removing instance(" + resourceKind + ") " + instanceId + " for remote member.");
@@ -1374,7 +1332,7 @@ public class ManagerController {
 					new HashMap<String, String>(xOCCIAtt), true, properties.getProperty("xmpp_jid"));
 			LOGGER.info("Created order: " + order);
 			currentOrders.add(order);
-			orderRepository.addOrder(federationToken.getUser(), order);
+			managerDataStoreController.addOrder(order);
 		}
 		if (!orderSchedulerTimer.isScheduled()) {
 			triggerOrderScheduler();
@@ -1383,77 +1341,9 @@ public class ManagerController {
 		return currentOrders;
 	}
 
-	private void triggerOrderDBUpdater() {
-		String bdUpdaterPeriodStr = properties.getProperty(ConfigurationConstants.BD_UPDATER_PERIOD_KEY);
-		long schedulerPeriod = bdUpdaterPeriodStr == null ? DEFAULT_BD_UPDATE_PERIOD : Long.valueOf(bdUpdaterPeriodStr);
-		orderDBUpdaterTimer.scheduleAtFixedRate(new TimerTask() {
-			@Override
-			public void run() {
-				try {
-					updateOrderDB();
-				} catch (Throwable e) {
-					LOGGER.error("Could not update orders in database.", e);
-				}
-				try {
-					updateStorageLinkDB();
-				} catch (Throwable e) {
-					LOGGER.error("Could not update storage links in database.", e);
-				}				
-			}
-		}, 60000, schedulerPeriod);
-	}
-
-	protected void updateStorageLinkDB() throws SQLException, JSONException {
-		LOGGER.debug("Storage link database update start.");
-		Map<String, StorageLink> storageLinksDBtoRemove = new HashMap<String, StorageLinkRepository.StorageLink>(); 
-		for (StorageLink storageLink : new ArrayList<StorageLink>(this.managerDatabase.getStorageLinks())) {
-			storageLinksDBtoRemove.put(storageLink.getId(), storageLink);
-		}
-		
-		List<StorageLink> allManagerStorageLinks = new ArrayList<StorageLink>(
-				storageLinkRepository.getAllStorageLinks());
-		for (StorageLink storageLink : allManagerStorageLinks) {
-			if (!storageLinksDBtoRemove.containsKey(storageLink.getId())) {
-				this.managerDatabase.addStorageLink(storageLink);
-			} else {
-				this.managerDatabase.updateStorageLink(storageLink);
-				storageLinksDBtoRemove.remove(storageLink.getId());
-			}
-		}
-		for (StorageLink storageLink : storageLinksDBtoRemove.values()) {
-			this.managerDatabase.removeStorageLink(storageLink);
-		}
-		LOGGER.debug("Storage link database update finish.");
-	}
-
-	protected void updateOrderDB() throws SQLException, JSONException {
-		LOGGER.debug("Order database update start.");
-		List<Order> orders = this.managerDatabase.getOrders();
-		Map<String, Order> ordersDB = new HashMap<String, Order>();
-		for (Order order : orders) {
-			ordersDB.put(order.getId(), order);
-		}
-		
-		List<Order> allOrders = new ArrayList<Order>(orderRepository.getAllOrders());
-		for (Order order : allOrders) {
-			if (!ordersDB.containsKey(order.getId())) {
-				managerDatabase.addOrder(order);
-			} else {
-				managerDatabase.updateOrder(order);
-				ordersDB.remove(order.getId());
-			}
-		}
-		for (Order order: ordersDB.values()) {
-			managerDatabase.removeOrder(order);
-		}
-		LOGGER.debug("Order database update finish.");
-	}
-
 	protected void triggerInstancesMonitor() {
-		String instanceMonitoringPeriodStr = properties
-				.getProperty(ConfigurationConstants.INSTANCE_MONITORING_PERIOD_KEY);
-		final long instanceMonitoringPeriod = instanceMonitoringPeriodStr == null ? DEFAULT_INSTANCE_MONITORING_PERIOD
-				: Long.valueOf(instanceMonitoringPeriodStr);
+		if (this.forTest) { return; }
+		final long instanceMonitoringPeriod = ManagerControllerHelper.getInstanceMonitoringPeriod(this.properties);
 
 		instanceMonitoringTimer.scheduleAtFixedRate(new TimerTask() {
 			@Override
@@ -1470,19 +1360,37 @@ public class ManagerController {
 	protected void monitorInstancesForLocalOrders() {
 		boolean turnOffTimer = true;
 		LOGGER.info("Monitoring instances.");
-
-		for (Order order : orderRepository.getAllLocalOrders()) {
+		long monitorPeriod = ManagerControllerHelper.getInstanceMonitoringPeriod(this.properties);
+		this.monitoringHelper.checkFailedMonitoring(monitorPeriod);
+		
+		for (Order order : this.managerDataStoreController.getAllLocalOrders()) {
 			if (order.getState().in(OrderState.FULFILLED, OrderState.DELETED, OrderState.SPAWNING)) {
 				turnOffTimer = false;
 			}
 			
 			if (order.getState().in(OrderState.FULFILLED, OrderState.DELETED)) {
+				boolean isNotFoundException = false;
 				try {
 					LOGGER.debug("Monitoring instance of order: " + order);
 					removeFailedInstance(order, getInstance(order, order.getResourceKing()));
+					this.monitoringHelper.eraseFailedMonitoringAttempts(order);
+				} catch (OCCIException e) {
+					LOGGER.debug("Error while getInstance of " + order.getInstanceId(), e);
+					
+					if (e.getType().equals(ErrorType.NOT_FOUND)) {
+						isNotFoundException = true;
+					} else {
+						this.monitoringHelper.addFailedMonitoringAttempt(order);
+					}
 				} catch (Throwable e) {
 					LOGGER.debug("Error while getInstance of " + order.getInstanceId(), e);
-					instanceRemoved(orderRepository.get(order.getId()));
+					this.monitoringHelper.addFailedMonitoringAttempt(order);
+				}
+				
+				if (isNotFoundException || this.monitoringHelper.isMaximumFailedMonitoringAttempts(order) 
+						|| (order.getState().equals(OrderState.DELETED) && order.getInstanceId() == null)) {
+					instanceRemoved(this.managerDataStoreController.getOrder(order.getId()));
+					this.monitoringHelper.eraseFailedMonitoringAttempts(order);
 				}
 			}
 		}
@@ -1524,15 +1432,10 @@ public class ManagerController {
 		populateWithManagerPublicKey(xOCCIAttCopy, categoriesCopy);
 		order.setProvidingMemberId(memberAddress);
 		order.setState(OrderState.PENDING);
+		this.managerDataStoreController.updateOrder(order);
 
-		LOGGER.info("Submiting order " + order + " to member " + memberAddress);
-		
-		ForwardedOrder forwardedOrder = new ForwardedOrder(order, dateUtils.currentTimeMillis());
-		ForwardedOrder forwardedOrderBefore = asynchronousOrders.get(order.getId());
-		forwardedOrder.addMembersServered(
-				forwardedOrderBefore != null ? forwardedOrderBefore.getMembersServered() : null);
-		
-		asynchronousOrders.put(order.getId(),forwardedOrder);
+		LOGGER.info("Submiting order " + order + " to member " + memberAddress);		
+		this.managerDataStoreController.addOrderSyncronous(order.getId(), dateUtils.currentTimeMillis(), order.getProvidingMemberId());
 		ManagerPacketHelper.asynchronousRemoteOrder(order.getId(), categoriesCopy, xOCCIAttCopy, memberAddress, 
 				federationIdentityPlugin.getForwardableToken(order.getFederationToken()), 
 				packetSender, new AsynchronousOrderCallback() {
@@ -1540,12 +1443,13 @@ public class ManagerController {
 					public void success(String instanceId) {
 						LOGGER.debug("The order " + order + " forwarded to " + memberAddress + " gets instance "
 								+ instanceId);
-						if (asynchronousOrders.get(order.getId()) == null) {
+						if (managerDataStoreController.isOrderSyncronous(order.getId()) == false) {
 							return;
 						}
 						if (instanceId == null) {
 							if (order.getState().equals(OrderState.PENDING)) {
-								order.setState(OrderState.OPEN);								
+								order.setState(OrderState.OPEN);
+								managerDataStoreController.updateOrder(order);
 							}
 							return;
 						}
@@ -1555,16 +1459,17 @@ public class ManagerController {
 						}
 
 						// reseting time stamp
-						asynchronousOrders.get(order.getId()).setTimeStamp(dateUtils.currentTimeMillis());
+						managerDataStoreController.updateOrderSyncronous(order.getId(), dateUtils.currentTimeMillis());
 
 						order.setInstanceId(instanceId);
-						order.setProvidingMemberId(memberAddress);						
+						order.setProvidingMemberId(memberAddress);
 						
 						boolean isStorageOrder = OrderConstants.STORAGE_TERM.equals(order.getResourceKing());
 						boolean isNetworkOrder = OrderConstants.NETWORK_TERM.equals(order.getResourceKing());						
 						if (isStorageOrder || isNetworkOrder) {
-							asynchronousOrders.remove(order.getId());
+							managerDataStoreController.removeOrderSyncronous(order.getId());
 							order.setState(OrderState.FULFILLED);
+							managerDataStoreController.updateOrder(order);
 							return;
 						}
 						
@@ -1575,6 +1480,7 @@ public class ManagerController {
 									+ " from member " + memberAddress + ".", e);
 							if (order.getState().equals(OrderState.PENDING)) {
 								order.setState(OrderState.OPEN);
+								managerDataStoreController.updateOrder(order);
 							}
 							return;
 						}
@@ -1588,12 +1494,13 @@ public class ManagerController {
 							order.setState(OrderState.OPEN);
 						}
 						order.setProvidingMemberId(null);
+						managerDataStoreController.updateOrder(order);
 					}
 				});
 	}
 
 	protected boolean isOrderForwardedtoRemoteMember(String orderId) {
-		return asynchronousOrders.containsKey(orderId);
+		return this.managerDataStoreController.isOrderSyncronous(orderId);
 	}
 
 	private void wakeUpSleepingHosts(Order order) {
@@ -1633,15 +1540,16 @@ public class ManagerController {
 
 				if (order.isLocal() && !isFulfilledByLocalMember(order)) {
 					removeAsynchronousRemoteOrders(order, false);
-					asynchronousOrders.remove(order.getId());
+					managerDataStoreController.removeOrderSyncronous(order.getId());
 				}
 
-				if (!isBasicMode && !order.isLocal()) {
+				if (!order.isLocal()) {
 					ManagerPacketHelper.replyToServedOrder(order, packetSender);
 				}
 
 				if (!order.getState().in(OrderState.DELETED)) {
 					order.setState(OrderState.FULFILLED);
+					managerDataStoreController.updateOrder(order);
 				}
 
 				LOGGER.debug("Fulfilled order: " + order);
@@ -1657,17 +1565,18 @@ public class ManagerController {
 		}
 	}
 	
-	private void removeAsynchronousRemoteOrders(final Order order, boolean removeAll) {
-		ForwardedOrder forwardedOrder = asynchronousOrders.get(order.getId());
-		for (String memberServered : forwardedOrder != null ? forwardedOrder.getMembersServered() : new ArrayList<String>()) {						
-			if (memberServered == null || forwardedOrder.getOrder() == null 
-					|| (!removeAll && order.getProvidingMemberId().equals(memberServered) )) {
+	private void removeAsynchronousRemoteOrders(Order order, boolean removeAll) {
+		List<String> federationMembersServered = this.managerDataStoreController.getFederationMembersServeredBy(order.getId());
+		if (federationMembersServered == null) {
+			return;
+		}
+		for (String federationMemberServered : federationMembersServered) {
+			if (!removeAll && order.getProvidingMemberId().equals(federationMemberServered)) {
 				continue;
 			}
 			try {
-				removeRemoteOrder(memberServered, order);		
-			} catch (Exception e) {
-			}
+				removeRemoteOrder(federationMemberServered, order);		
+			} catch (Exception e) {}
 		}
 	}	
 	
@@ -1719,7 +1628,8 @@ public class ManagerController {
 		return command;
 	}
 
-	private void triggerOrderScheduler() {
+	protected void triggerOrderScheduler() {
+		if (this.forTest) { return; }		
 		String schedulerPeriodStr = properties.getProperty(ConfigurationConstants.SCHEDULER_PERIOD_KEY);
 		long schedulerPeriod = schedulerPeriodStr == null ? DEFAULT_SCHEDULER_PERIOD : Long.valueOf(schedulerPeriodStr);
 		orderSchedulerTimer.scheduleAtFixedRate(new TimerTask() {
@@ -1741,7 +1651,7 @@ public class ManagerController {
 
 		// removing orders that reach timeout
 		checkPedingOrders();
-		for (Order order : new ArrayList<Order>(orderRepository.getOrdersIn(OrderState.OPEN))) {
+		for (Order order : new ArrayList<Order>(managerDataStoreController.getOrdersIn(OrderState.OPEN))) {
 			if (!order.getState().equals(OrderState.OPEN)) {
 				LOGGER.debug("The order " + order.getId() + " is no longer open.");
 				continue;
@@ -1781,6 +1691,7 @@ public class ManagerController {
 				}
 			} else if (order.isExpired()) {
 				order.setState(OrderState.CLOSED);
+				this.managerDataStoreController.updateOrder(order);
 			} else {
 				allFulfilled = false;
 			}
@@ -1811,46 +1722,60 @@ public class ManagerController {
 
 	protected void monitorServedOrders() {
 		LOGGER.info("Monitoring served orders.");
+		long monitorPeriod = ManagerControllerHelper.getServerOrderMonitoringPeriod(this.properties);
+		this.monitoringHelper.checkFailedMonitoring(monitorPeriod);
 
-		List<Order> servedOrders = orderRepository.getAllServedOrders();
+		List<Order> servedOrders = this.managerDataStoreController.getAllServedOrders();
 		for (Order order : servedOrders) {
-			if (!isInstanceBeingUsedByRemoteMember(order)) {
-				LOGGER.debug("The instance " + order.getInstanceId() + " is not being used anymore by "
-						+ order.getRequestingMemberId() + " and will be removed.");
-				if (order.getInstanceId() != null) {
-					try {
-						removeInstanceForRemoteMember(order.getInstanceId());						
-					} catch (Exception e) {}
+			try {
+				isInstanceBeingUsedByRemoteMember(order);
+				this.monitoringHelper.eraseFailedMonitoringAttempts(order);
+				continue;
+			} catch (OCCIException e) {				
+				if (e.getType().equals(ErrorType.NOT_FOUND) || this.monitoringHelper.isMaximumFailedMonitoringAttempts(order)) {
+					LOGGER.debug("The instance " + order.getInstanceId() + " is not being used anymore by " 
+							+ order.getRequestingMemberId() + " and will be removed.", e);
+					
+					if (order.getInstanceId() != null) {
+						try {
+							removeInstanceForRemoteMember(order.getInstanceId());			
+						} catch (Exception ex) {}
+					}
+					this.managerDataStoreController.excludeOrder(order.getId());
+				} else {
+					this.monitoringHelper.addFailedMonitoringAttempt(order);
 				}
-				orderRepository.exclude(order.getId());
 			}
 		}
 
-		if (orderRepository.getAllServedOrders().isEmpty()) {
+		if (this.managerDataStoreController.getAllServedOrders().isEmpty()) {
 			LOGGER.info("There are no remote orders. Canceling remote order monitoring.");
-			servedOrderMonitoringTimer.cancel();
+			this.servedOrderMonitoringTimer.cancel();
 		}
 	}
 
 	private boolean isInstanceBeingUsedByRemoteMember(Order servedOrder) {
+		String globalInstanceId = null;
 		try {
-			String globalInstanceId = servedOrder.getGlobalInstanceId();
+			globalInstanceId = servedOrder.getGlobalInstanceId();
 			ManagerPacketHelper.checkIfInstanceIsBeingUsedByRemoteMember(globalInstanceId, servedOrder, packetSender);
 			return true;
 		} catch (OCCIException e) {
-			return false;
+			LOGGER.error("Error while checking if instance " + globalInstanceId + " is being used by "
+							+ servedOrder.getRequestingMemberId(), e);
+			throw e;
 		}
 	}
 
 	protected void checkPedingOrders() {
-		Collection<ForwardedOrder> forwardedOrders = asynchronousOrders.values();
-		for (ForwardedOrder forwardedOrder : forwardedOrders) {
-			if (timoutReached(forwardedOrder.getTimeStamp()) 
-					&& forwardedOrder.getOrder().getState().equals(OrderState.PENDING)){
-				LOGGER.debug("The forwarded order " + forwardedOrder.getOrder().getId()
+		List<Order> ordersPedding = this.managerDataStoreController.getOrdersByState(OrderState.PENDING);
+		for (Order order : ordersPedding) {
+			if (timoutReached(order.getSyncronousTime())) {
+				LOGGER.debug("The forwarded order " + order.getId()
 						+ " reached timeout and is been removed from asynchronousOrders list.");
-				forwardedOrder.getOrder().setState(OrderState.OPEN);
-			}
+				order.setState(OrderState.OPEN);
+				this.managerDataStoreController.updateOrder(order);		
+			}			
 		}
 	}
 
@@ -1936,6 +1861,7 @@ public class ManagerController {
 				order.setState(OrderState.SPAWNING);
 				order.setInstanceId(instanceId);
 				order.setProvidingMemberId(properties.getProperty(ConfigurationConstants.XMPP_JID_KEY));
+				this.managerDataStoreController.updateOrder(order);
 				execBenchmark(order);
 				return instanceId != null;
 			} catch (OCCIException e) {
@@ -1943,12 +1869,8 @@ public class ManagerController {
 				if (errorType == ErrorType.QUOTA_EXCEEDED) {
 					LOGGER.warn("Order failed locally for quota exceeded.", e);
 					ArrayList<Order> ordersWithInstances = new ArrayList<Order>(
-							orderRepository.getOrdersIn(OrderState.FULFILLED, OrderState.DELETED));
-					
-					Order orderToPreempt = null;
-					if(!isBasicMode){
-						orderToPreempt = prioritizationPlugin.takeFrom(order, ordersWithInstances);
-					}
+							managerDataStoreController.getOrdersIn(OrderState.FULFILLED, OrderState.DELETED));
+					Order orderToPreempt = prioritizationPlugin.takeFrom(order, ordersWithInstances);
 					if (orderToPreempt == null) {
 						throw e;
 					}
@@ -1980,7 +1902,8 @@ public class ManagerController {
 				order.setState(OrderState.FULFILLED);
 				order.setInstanceId(instanceId);
 				order.setProvidingMemberId(properties.getProperty(ConfigurationConstants.XMPP_JID_KEY));
-				if (!order.isLocal() && !isBasicMode) {
+				this.managerDataStoreController.updateOrder(order);
+				if (!order.isLocal()) {
 					ManagerPacketHelper.replyToServedOrder(order, packetSender);
 				}
 				
@@ -1993,12 +1916,12 @@ public class ManagerController {
 			try {
 				String instanceId = networkPlugin.requestInstance(federationUserToken, 
 						order.getCategories(),order.getxOCCIAtt());
-
-				// TODO review. refactor this code 
+				
 				order.setState(OrderState.FULFILLED);
 				order.setInstanceId(instanceId);
 				order.setProvidingMemberId(properties.getProperty(ConfigurationConstants.XMPP_JID_KEY));
-				if (!order.isLocal() && !isBasicMode) {
+				this.managerDataStoreController.updateOrder(order);
+				if (!order.isLocal()) {
 					ManagerPacketHelper.replyToServedOrder(order, packetSender);
 				}
 				
@@ -2034,20 +1957,15 @@ public class ManagerController {
 	public void setPacketSender(AsyncPacketSender packetSender) {
 		this.packetSender = packetSender;
 	}
-
-	public void setOrders(OrderRepository orders) {
-		this.orderRepository = orders;
+	
+	public ManagerDataStoreController getManagerDataStoreController() {
+		return this.managerDataStoreController;
 	}
 	
-	public StorageLinkRepository getStorageLinkRepository() {
-		return storageLinkRepository;
+	public void setManagerDataStoreController(ManagerDataStoreController managerDataStoreController) {
+		this.managerDataStoreController = managerDataStoreController;
 	}
 	
-	public void setStorageLinkRepository(
-			StorageLinkRepository storageLinkRepository) {
-		this.storageLinkRepository = storageLinkRepository;
-	}
-
 	public Token getToken(Map<String, String> attributesToken) {
 		return localIdentityPlugin.createToken(attributesToken);
 	}
@@ -2069,7 +1987,7 @@ public class ManagerController {
 	}
 
 	protected List<Order> getServedOrders() {
-		return orderRepository.getAllServedOrders();
+		return managerDataStoreController.getAllServedOrders();
 	}
 
 	public MapperPlugin getLocalCredentailsPlugin() {
@@ -2139,7 +2057,7 @@ public class ManagerController {
 			} else {
 				LOGGER.debug(order.getInstanceId() + " is remote, going out to " + order.getProvidingMemberId()
 						+ " to get its information.");
-				if(!isBasicMode){
+				if(!isBasicMode){		
 					instance = getRemoteInstance(order);
 				}
 			}
@@ -2152,12 +2070,12 @@ public class ManagerController {
 			List<Category> categories, Map<String, String> xOCCIAtt) {
 		
 		String target = xOCCIAtt.get(StorageAttribute.TARGET.getValue());
-		String normalizeTargetAttr = normalizeInstanceId(target);
+		String normalizeTargetAttr = normalizeFogbowResourceId(target);
 		xOCCIAtt.put(StorageAttribute.TARGET.getValue(), normalizeTargetAttr);
-		String normalizeSourceAttr = normalizeInstanceId(xOCCIAtt.get(StorageAttribute.SOURCE.getValue()));
+		String normalizeSourceAttr = normalizeFogbowResourceId(xOCCIAtt.get(StorageAttribute.SOURCE.getValue()));
 		xOCCIAtt.put(StorageAttribute.SOURCE.getValue(), normalizeSourceAttr);		
-		Order storageOrder = orderRepository.getOrderByInstance(normalizeTargetAttr);
-		Order computeOrder = orderRepository.getOrderByInstance(normalizeSourceAttr);
+		Order storageOrder = managerDataStoreController.getOrderByInstance(normalizeTargetAttr);
+		Order computeOrder = managerDataStoreController.getOrderByInstance(normalizeSourceAttr);
 		
 		if (storageOrder == null || computeOrder == null) {
 			throw new OCCIException(ErrorType.NOT_FOUND, ResponseConstants.NOT_FOUND_INSTANCE);
@@ -2192,7 +2110,7 @@ public class ManagerController {
 		storageLink.setProvadingMemberId(computeOrder.getProvidingMemberId());
 		Token federationToken = federationIdentityPlugin.getToken(accessId);
 		storageLink.setFederationToken(federationToken);
-		storageLinkRepository.addStorageLink(federationToken.getUser(), storageLink);	
+		this.managerDataStoreController.addStorageLink(storageLink);	
 		
 		return storageLink;
 	}
@@ -2213,7 +2131,8 @@ public class ManagerController {
 		if (federationToken == null) {
 			throw new OCCIException(ErrorType.UNAUTHORIZED, ResponseConstants.UNAUTHORIZED);
 		}
-		StorageLink storageLink = storageLinkRepository.get(federationToken.getUser(), normalizeInstanceId(storageLinkId));
+		StorageLink storageLink = this.managerDataStoreController.getStorageLink(federationToken.getUser().getId(), 
+				normalizeFogbowResourceId(storageLinkId));
 		
 		if (storageLink == null) {
 			throw new OCCIException(ErrorType.NOT_FOUND, ResponseConstants.NOT_FOUND);
@@ -2223,14 +2142,14 @@ public class ManagerController {
 			storageLink.setFederationToken(federationToken);
 			ManagerPacketHelper.deleteRemoteStorageLink(storageLink, packetSender);
 		} else {
-			String storageIdNormalized = normalizeInstanceId(storageLink.getTarget());		
+			String storageIdNormalized = normalizeFogbowResourceId(storageLink.getTarget());		
 			storageLink.setTarget(storageIdNormalized);
 									
-			detachStorage(storageLink, getFederationUserToken(orderRepository
-					.getOrderByInstance(normalizeInstanceId(storageLink.getSource()))));
+			detachStorage(storageLink, getFederationUserToken(managerDataStoreController
+					.getOrderByInstance(normalizeFogbowResourceId(storageLink.getSource()))));
 		}		
 		
-		storageLinkRepository.remove(storageLinkId);	
+		this.managerDataStoreController.removeStorageLink(normalizeFogbowResourceId(storageLinkId));	
 	}
 
 	public void detachStorage(StorageLink storageLink, Token federationUserToken) {		
@@ -2249,7 +2168,6 @@ public class ManagerController {
 		}
 		
 		Token federationToken = getTokenFromFederationIdP(federationAccessId);
-		
 		if (federationToken == null) {
 			throw new OCCIException(ErrorType.UNAUTHORIZED, ResponseConstants.UNAUTHORIZED);
 		}
@@ -2270,7 +2188,7 @@ public class ManagerController {
 		if (adminUserStr == null || adminUserStr.isEmpty()) {
 			return true;
 		}
-		String normalizedUser = MapperHelper.normalizeUser(federationToken.getUser());
+		String normalizedUser = MapperHelper.normalizeUser(federationToken.getUser().getName());
 		StringTokenizer st = new StringTokenizer(adminUserStr, ";");
 		while (st.hasMoreTokens()) {
 			if (normalizedUser.equals(st.nextToken().trim())) {
@@ -2286,7 +2204,7 @@ public class ManagerController {
 			throw new OCCIException(ErrorType.UNAUTHORIZED, ResponseConstants.UNAUTHORIZED);
 		}
 		
-		AccountingInfo userAccounting = accountingPlugin.getAccountingInfo(federationToken.getUser(),
+		AccountingInfo userAccounting = accountingPlugin.getAccountingInfo(federationToken.getUser().getId(),
 				properties.getProperty(ConfigurationConstants.XMPP_JID_KEY), providingMember);
 		if (userAccounting == null) {
 			return 0;
@@ -2295,26 +2213,21 @@ public class ManagerController {
 	}
 	
 	public ResourceUsage getUsages(String federationAccessId, String providingMember) {
-		
-		if(isBasicMode){
-			new ResourceUsage(0, 0);
-		}
-		
 		double computeUsage = getUsage(federationAccessId, providingMember, computeAccountingPlugin);
 		double storageUsage = getUsage(federationAccessId, providingMember, storageAccountingPlugin);
 				
 		return new ResourceUsage(computeUsage, storageUsage);		
 	}
 	
-	public ResourcesInfo getResourceInfoForRemoteMember(String accessId, String user) {		
+	public ResourcesInfo getResourceInfoForRemoteMember(String accessId, String userId) {		
 		Map<String, String> localCredentials = getLocalCredentials(accessId);
-		return getResourcesInfo(localCredentials, user, false);
+		return getResourcesInfo(localCredentials, userId, false);
 	}
 
 	protected FailedBatch getFailedBatches() {
 		return failedBatch;
 	}
-
+	
 	protected class FailedBatch {
 		private Map<String, FailedBatchType> failedBatches = new HashMap<String, FailedBatchType>();
 
@@ -2347,43 +2260,4 @@ public class ManagerController {
 
 	protected enum FailedBatchType { FEDERATION_USER }
 
-	private static class ForwardedOrder {
-
-		private Order order;
-		private long timeStamp;
-		private List<String> membersServered;
-
-
-		public ForwardedOrder(Order order, long timeStamp) {
-			this.order = order;
-			this.timeStamp = timeStamp;
-			this.membersServered = new ArrayList<String>();
-		}
-
-		public void setTimeStamp(long timeStamp) {
-			this.timeStamp = timeStamp;
-		}
-
-		public Order getOrder() {
-			return order;
-		}
-
-		public long getTimeStamp() {
-			return timeStamp;
-		}
-
-		public List<String> getMembersServered() {
-			return membersServered;
-		}
-
-		public void addMembersServered(List<String> membersServered) {
-			if (membersServered == null || !membersServered.contains(order.getProvidingMemberId())) {
-				this.membersServered.add(order.getProvidingMemberId());
-			}
-			if (membersServered == null) {
-				return;
-			}
-			this.membersServered.addAll(membersServered);
-		}
-	}
 }

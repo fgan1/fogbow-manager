@@ -24,7 +24,7 @@ import org.fogbowcloud.manager.occi.network.NetworkServerResource;
 import org.fogbowcloud.manager.occi.order.Order;
 import org.fogbowcloud.manager.occi.order.OrderConstants;
 import org.fogbowcloud.manager.occi.order.OrderServerResource;
-import org.fogbowcloud.manager.occi.storage.StorageLinkRepository.StorageLink;
+import org.fogbowcloud.manager.occi.storage.StorageLink;
 import org.fogbowcloud.manager.occi.storage.StorageLinkServerResource;
 import org.fogbowcloud.manager.occi.storage.StorageServerResource;
 import org.restlet.Application;
@@ -245,8 +245,8 @@ public class OCCIApplication extends Application {
 		return managerFacade.getFlavorsProvided();
 	}
 
-	public String getUser(String authToken) {
-		return managerFacade.getUser(authToken);
+	public String getUserId(String authToken) {
+		return managerFacade.getUserId(authToken);
 	}
 
 	public List<AccountingInfo> getAccountingInfo(String authToken, String resourceKing) {

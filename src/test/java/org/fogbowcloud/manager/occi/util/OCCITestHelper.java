@@ -36,15 +36,14 @@ import org.fogbowcloud.manager.core.plugins.NetworkPlugin;
 import org.fogbowcloud.manager.core.plugins.StoragePlugin;
 import org.fogbowcloud.manager.core.util.DefaultDataTestHelper;
 import org.fogbowcloud.manager.occi.OCCIApplication;
+import org.fogbowcloud.manager.occi.TestDataStorageHelper;
 import org.fogbowcloud.manager.occi.model.HeaderUtils;
 import org.fogbowcloud.manager.occi.model.OCCIHeaders;
 import org.fogbowcloud.manager.occi.model.ResourceRepository;
 import org.fogbowcloud.manager.occi.order.Order;
 import org.fogbowcloud.manager.occi.order.OrderAttribute;
 import org.fogbowcloud.manager.occi.order.OrderConstants;
-import org.fogbowcloud.manager.occi.order.OrderRepository;
-import org.fogbowcloud.manager.occi.storage.StorageLinkRepository;
-import org.fogbowcloud.manager.occi.storage.StorageLinkRepository.StorageLink;
+import org.fogbowcloud.manager.occi.storage.StorageLink;
 import org.fogbowcloud.manager.xmpp.AsyncPacketSender;
 import org.mockito.Mockito;
 import org.mockito.invocation.InvocationOnMock;
@@ -81,8 +80,6 @@ public class OCCITestHelper {
 	public static final String INSTANCE_DB_FILE = "./src/test/resources/fedInstance.db";
 
 	private Component component;
-	private OrderRepository orders;
-	private StorageLinkRepository storageLinkRespository;
 
 	public ManagerController initializeComponentExecutorSameThread(ComputePlugin computePlugin, IdentityPlugin identityPlugin,
 			AuthorizationPlugin authorizationPlugin, BenchmarkingPlugin benchmarkingPlugin,
@@ -111,6 +108,7 @@ public class OCCITestHelper {
 		ExecutorService benchmarkExecutor = new CurrentThreadExecutorService();
 
 		ManagerController facade = new ManagerController(properties, executor);
+		TestDataStorageHelper.clearManagerDataStore(facade.getManagerDataStoreController().getManagerDatabase());
 		ResourceRepository.init(properties);
 		facade.setComputePlugin(computePlugin);
 		facade.setLocalCredentailsPlugin(mapperPlugin);
@@ -125,7 +123,7 @@ public class OCCITestHelper {
 		return facade;
 	}
 
-	public void initializeComponent(ComputePlugin computePlugin, IdentityPlugin identityPlugin,
+	public ManagerController initializeComponent(ComputePlugin computePlugin, IdentityPlugin identityPlugin,
 			AuthorizationPlugin authorizationPlugin) throws Exception {
 		component = new Component();
 		Server server = component.getServers().add(Protocol.HTTP, ENDPOINT_PORT);
@@ -140,6 +138,7 @@ public class OCCITestHelper {
 		ResourceRepository.init(properties);
 
 		ManagerController facade = new ManagerController(properties, Mockito.mock(ScheduledExecutorService.class));
+		TestDataStorageHelper.clearManagerDataStore(facade.getManagerDataStoreController().getManagerDatabase());
 		facade.setComputePlugin(computePlugin);
 		facade.setAuthorizationPlugin(authorizationPlugin);
 		facade.setLocalIdentityPlugin(identityPlugin);
@@ -147,6 +146,8 @@ public class OCCITestHelper {
 
 		component.getDefaultHost().attach(new OCCIApplication(facade));
 		component.start();
+		
+		return facade;
 	}
 
 	public ManagerController initializeComponentCompute(ComputePlugin computePlugin, IdentityPlugin identityPlugin, IdentityPlugin federationIdentityPlugin,
@@ -205,7 +206,8 @@ public class OCCITestHelper {
 			properties.put(ConfigurationConstants.OCCI_EXTRA_RESOURCES_PREFIX + "m1-medium", "Glue2vCPU >= 2 && Glue2RAM >= 8096");
 		}
 
-		ManagerController facade = new ManagerController(properties);
+		ManagerController facade = new ManagerController(properties, null);
+		TestDataStorageHelper.clearManagerDataStore(facade.getManagerDataStoreController().getManagerDatabase());
 		facade.setComputePlugin(computePlugin);
 		facade.setAuthorizationPlugin(authorizationPlugin);
 		facade.setLocalCredentailsPlugin(mapperPlugin);
@@ -217,19 +219,15 @@ public class OCCITestHelper {
 		facade.setBenchmarkingPlugin(benchmarkingPlugin);
 		facade.setStoragePlugin(storagePlugin);
 		
-		storageLinkRespository = new StorageLinkRepository();
-		facade.setStorageLinkRepository(storageLinkRespository);
 		for (Entry<String, List<StorageLink>> entry : storageLinksToAdd.entrySet()) {
 			for (StorageLink storageLink : entry.getValue()) {
-				storageLinkRespository.addStorageLink(entry.getKey(), storageLink);
+				facade.getManagerDataStoreController().addStorageLink(storageLink);
 			}
 		}
 		
-		orders = new OrderRepository();
-		facade.setOrders(orders);
 		for (Entry<String, List<Order>> entry : ordersToAdd.entrySet()) {
 			for (Order order : entry.getValue())
-				orders.addOrder(entry.getKey(), order);
+				facade.getManagerDataStoreController().addOrder(order);
 		}
 
 		ResourceRepository.init(properties);
@@ -262,21 +260,17 @@ public class OCCITestHelper {
 			properties.put(ConfigurationConstants.OCCI_EXTRA_RESOURCES_PREFIX + "m1-medium", "Glue2vCPU >= 2 && Glue2RAM >= 8096");
 		}
 
-		ManagerController facade = new ManagerController(properties);
+		ManagerController facade = new ManagerController(properties, null);
+		TestDataStorageHelper.clearManagerDataStore(facade.getManagerDataStoreController().getManagerDatabase());
 		facade.setNetworkPlugin(networkPlugin);
 		facade.setAuthorizationPlugin(authorizationPlugin);
 		facade.setLocalCredentailsPlugin(mapperPlugin);
 		facade.setLocalIdentityPlugin(identityPlugin);
-		facade.setFederationIdentityPlugin(identityPlugin);
-		
-		storageLinkRespository = new StorageLinkRepository();
-		facade.setStorageLinkRepository(storageLinkRespository);
+		facade.setFederationIdentityPlugin(identityPlugin);	
 
-		orders = new OrderRepository();
-		facade.setOrders(orders);
 		for (Entry<String, List<Order>> entry : ordersToAdd.entrySet()) {
 			for (Order order : entry.getValue())
-				orders.addOrder(entry.getKey(), order);
+				facade.getManagerDataStoreController().addOrder(order);
 		}
 
 		ResourceRepository.init(properties);
@@ -302,7 +296,8 @@ public class OCCITestHelper {
 
 		Properties properties = new Properties();
 		properties.put(ConfigurationConstants.XMPP_JID_KEY, DefaultDataTestHelper.LOCAL_MANAGER_COMPONENT_URL);
-		ManagerController facade = new ManagerController(properties);
+		ManagerController facade = new ManagerController(properties, null);
+		TestDataStorageHelper.clearManagerDataStore(facade.getManagerDataStoreController().getManagerDatabase());
 		facade.setComputePlugin(computePlugin);
 		facade.setLocalIdentityPlugin(identityPlugin);
 		facade.setFederationIdentityPlugin(identityPlugin);
@@ -406,7 +401,7 @@ public class OCCITestHelper {
 		while (sc.hasNextLine() && notFound) {
 			String line = sc.nextLine().trim();
 			if (line.contains(OCCIHeaders.X_OCCI_ATTRIBUTE) && line.contains(attribute)) {
-				String[] tokens = line.split(attribute+"=");
+				String[] tokens = line.split(attribute + "=");
 				attValue = tokens.length > 1 ? tokens[1] : null;
 				notFound = true;
 			}
@@ -416,14 +411,16 @@ public class OCCITestHelper {
 		return attValue;
 	}
 	
-	public static String getOCCIAttByBodyString(String responseBody, String attribute) throws ParseException, IOException {
+	public static String getOCCIAttByBodyString(String responseBody, String attribute) 
+			throws ParseException, IOException {
 		String attValue = null;
 		Scanner sc = new Scanner(responseBody);
 		boolean notFound = true;
 		while (sc.hasNextLine() && notFound) {
 			String line = sc.nextLine().trim();
-			if (line.contains(OCCIHeaders.X_OCCI_ATTRIBUTE) && line.contains(attribute)) {
-				String[] tokens = line.split(attribute+"=");
+			String attributeToSplit = attribute + "=";
+			if (line.contains(OCCIHeaders.X_OCCI_ATTRIBUTE) && line.contains(attribute)) {				
+				String[] tokens = line.split(attributeToSplit);
 				attValue = tokens.length > 1 ? tokens[1] : null;
 				notFound = true;
 			}

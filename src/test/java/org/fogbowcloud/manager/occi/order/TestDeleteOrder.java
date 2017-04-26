@@ -18,9 +18,11 @@ import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.impl.client.HttpClients;
 import org.apache.http.util.EntityUtils;
+import org.fogbowcloud.manager.core.ManagerController;
 import org.fogbowcloud.manager.core.plugins.AuthorizationPlugin;
 import org.fogbowcloud.manager.core.plugins.ComputePlugin;
 import org.fogbowcloud.manager.core.plugins.IdentityPlugin;
+import org.fogbowcloud.manager.occi.TestDataStorageHelper;
 import org.fogbowcloud.manager.occi.model.Category;
 import org.fogbowcloud.manager.occi.model.ErrorType;
 import org.fogbowcloud.manager.occi.model.OCCIException;
@@ -40,11 +42,12 @@ import org.restlet.Response;
 
 public class TestDeleteOrder {
 
-	OCCITestHelper orderHelper;
+	private OCCITestHelper orderHelper;
+	private ManagerController managerController;
 
 	@SuppressWarnings({ "unchecked", "deprecation" })
 	@Before
-	public void setup() throws Exception {
+	public void setup() throws Exception {		
 		this.orderHelper = new OCCITestHelper();
 
 		ComputePlugin computePlugin = Mockito.mock(ComputePlugin.class);
@@ -58,15 +61,14 @@ public class TestDeleteOrder {
 
 		IdentityPlugin identityPlugin = Mockito.mock(IdentityPlugin.class);
 		Mockito.when(identityPlugin.getToken(OCCITestHelper.ACCESS_TOKEN))
-				.thenReturn(
-						new Token("id", OCCITestHelper.USER_MOCK, new Date(),
-								new HashMap<String, String>()));
+				.thenReturn(new Token("id", new Token.User(OCCITestHelper.USER_MOCK, 
+				OCCITestHelper.USER_MOCK), new Date(), new HashMap<String, String>()));
 		Mockito.when(identityPlugin.getToken(OCCITestHelper.INVALID_TOKEN)).thenThrow(
 				new OCCIException(ErrorType.UNAUTHORIZED, ResponseConstants.UNAUTHORIZED));
 		
 		AuthorizationPlugin authorizationPlugin = Mockito.mock(AuthorizationPlugin.class);
 		Mockito.when(authorizationPlugin.isAuthorized(Mockito.any(Token.class))).thenReturn(true);
-		this.orderHelper.initializeComponent(computePlugin, identityPlugin, authorizationPlugin);
+		managerController = this.orderHelper.initializeComponent(computePlugin, identityPlugin, authorizationPlugin);
 	}
 
 	@Test
@@ -249,9 +251,9 @@ public class TestDeleteOrder {
 	private int deletedInstancesCounter(HttpResponse response) throws ParseException, IOException,
 			URISyntaxException, HttpException {
 		HttpClient client = HttpClients.createMinimal();
-		List<String> orderLocations2 = OCCITestHelper.getLocationIds(response);
+		List<String> orderLocations = OCCITestHelper.getLocationIds(response);
 		int countDeletedInscantes = 0;
-		for (String orderLocation : orderLocations2) {
+		for (String orderLocation : orderLocations) {
 			HttpGet getSpecific = new HttpGet(orderLocation);
 			getSpecific.addHeader(OCCIHeaders.CONTENT_TYPE, OCCIHeaders.OCCI_CONTENT_TYPE);
 			getSpecific.addHeader(OCCIHeaders.X_AUTH_TOKEN, OCCITestHelper.ACCESS_TOKEN);
@@ -267,6 +269,8 @@ public class TestDeleteOrder {
 
 	@After
 	public void tearDown() throws Exception {
+		TestDataStorageHelper.clearManagerDataStore(
+				this.managerController.getManagerDataStoreController().getManagerDatabase());
 		this.orderHelper.stopComponent();
 	}
 }
